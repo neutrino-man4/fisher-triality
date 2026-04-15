@@ -8,7 +8,9 @@ import dataset_builder as db
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
+import argparse
 
+import direction_definitions as dd
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
 os.environ.setdefault("XDG_CACHE_HOME", "/tmp")
 
@@ -17,34 +19,75 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+import logging
+from configs.observables_small import FEATURE_LABELS, FEATURE_PLAIN, OBSERVABLES
+
+_RESULTS_ROOT = Path("/work/abal/triality/results")
+_RUNS_ROOT    = Path("/work/abal/triality/RUNS")
+_WEB_ROOT     = Path("/web/abal/public_html/plots/triality")
 
 
-ROOT = Path('/work/abal/triality/results')
-FIGURES_DIR = ROOT / "figures"
-GENERATED_DIR = ROOT / "generated"
-WEB_DIR = Path("/web/abal/public_html/plots/triality/EFT")
+@dataclass(frozen=True)
+class RunPaths:
+    figures_dir: Path
+    generated_dir: Path
+    web_dir: Path
+    run_dir: Path
+    dataset_path: Path
+    dataset_shifted_path: Path
+    metapath: Path
+
+    def makedirs(self) -> None:
+        for d in (self.figures_dir, self.generated_dir, self.web_dir, self.run_dir):
+            d.mkdir(exist_ok=True, parents=True)
 
 
-FEATURE_LABELS = [
-    r"$\mathrm{EEC}_1$",
-    r"$\mathrm{EEC}_2$",
-    r"$\mathrm{EEC}_3$",
-    r"$\mathrm{EEC}_4$",
-    r"$e_2^{(1)}$",
-    r"$e_2^{(2)}$",
-    r"$e_3^{(1)}$",
-    r"$e_3^{(2)}$",
-]
-FEATURE_PLAIN = [
-    "EEC_1",
-    "EEC_2",
-    "EEC_3",
-    "EEC_4",
-    "e2^(1)",
-    "e2^(2)",
-    "e3^(1)",
-    "e3^(2)",
-]
+def build_paths(comparison_type: str) -> RunPaths:
+    if comparison_type == "ttbar_eft":
+        run_dir = _RUNS_ROOT / "ttbar_eft"
+        return RunPaths(
+            figures_dir=_RESULTS_ROOT / "eft" / "figures",
+            generated_dir=_RESULTS_ROOT / "eft" / "generated",
+            web_dir=_WEB_ROOT / "eft",
+            run_dir=run_dir,
+            dataset_path=run_dir / "data_TTBar_SM.npy",
+            dataset_shifted_path=run_dir / "data_TTBar_EFT.npy",
+            metapath=run_dir / "metadata.npz",
+        )
+    elif comparison_type == "ttbar_vs_wqq":
+        run_dir = _RUNS_ROOT / "ttbar_VS_wqq"
+        return RunPaths(
+            figures_dir=_RESULTS_ROOT / "w_vs_top" / "figures",
+            generated_dir=_RESULTS_ROOT / "w_vs_top" / "generated",
+            web_dir=_WEB_ROOT / "w_vs_top",
+            run_dir=run_dir,
+            dataset_path=run_dir / "data_WtoQQ.npy",
+            dataset_shifted_path=run_dir / "data_TTBar_SM.npy",
+            metapath=run_dir / "metadata.npz",
+        )
+    else:
+        raise ValueError(f"Unknown comparison type: {comparison_type!r}")
+
+# FEATURE_LABELS = [
+#     r"$\mathrm{EEC}_1$",
+#     r"$\mathrm{EEC}_2$",
+#     r"$\mathrm{EEC}_3$",
+#     r"$\mathrm{EEC}_4$",
+#     r"$e_2^{(1)}$",
+#     r"$e_2^{(2)}$",
+#     r"$e_3^{(1)}$",
+#     r"$e_3^{(2)}$",
+# ]
+# FEATURE_PLAIN = [
+#     "EEC_1",
+#     "EEC_2",
+#     "EEC_3",
+#     "EEC_4",
+#     "e2^(1)",
+#     "e2^(2)",
+#     "e3^(1)",
+#     "e3^(2)",
+# ]
 
 
 @dataclass(frozen=True)
@@ -81,28 +124,28 @@ BENCHMARK_DIRECTION /= np.linalg.norm(BENCHMARK_DIRECTION)
 DELTA_KAPPA = 0.55
 LAMBDA_CUBIC = 3.0
 REDUNDANCY_BETA = 1.0
-COMMON_CORE_SIZE = 2
+COMMON_CORE_SIZE = 3
 
 def compute_benchmark_direction(
-    data_sm: np.ndarray,
-    data_eft: np.ndarray,
+    dataset_base: np.ndarray,
+    dataset_shifted: np.ndarray,
     regularisation: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Compute the natural parameter direction u from SM and EFT samples.
 
     The procedure is:
         1. Standardise both samples using SM means and standard deviations.
-        2. Compute the standardised mean shift Delta = <z>_EFT - <z>_SM.
+        2. Compute the standardised mean shift Delta = <z>_shifted - <z>_base.
         3. Estimate the correlation matrix I^(2) from the SM sample.
         4. Solve I^(2) u = Delta for u.
         5. Normalise u to unit norm.
 
     Parameters
     ----------
-    data_sm : np.ndarray
-        SM sample of shape (N_sm, D), where D is the number of observables.
-    data_eft : np.ndarray
-        EFT sample of shape (N_eft, D), same observable ordering as data_sm.
+    dataset_base : np.ndarray
+        SM sample of shape (N_base, D), where D is the number of observables.
+    dataset_shifted : np.ndarray
+        EFT sample of shape (N_shifted, D), same observable ordering as dataset_base.
     regularisation : float, optional
         Ridge parameter epsilon added to the diagonal of I^(2) before
         inversion, i.e. I^(2) -> I^(2) + epsilon * I. Use a small positive
@@ -125,25 +168,25 @@ def compute_benchmark_direction(
     ValueError
         If the two samples have different numbers of observables.
     """
-    if data_sm.shape[1] != data_eft.shape[1]:
+    if dataset_base.shape[1] != dataset_shifted.shape[1]:
         raise ValueError(
             f"Observable dimensions do not match: "
-            f"SM has {data_sm.shape[1]}, EFT has {data_eft.shape[1]}"
+            f"SM has {dataset_base.shape[1]}, EFT has {dataset_shifted.shape[1]}"
         )
 
     # Step 1: standardise using SM statistics
-    mean_sm: np.ndarray = data_sm.mean(axis=0)
-    std_sm: np.ndarray = data_sm.std(axis=0)
-    std_sm = np.where(std_sm > 0.0, std_sm, 1.0)  # guard against zero variance
+    mean_base: np.ndarray = dataset_base.mean(axis=0)
+    std_base: np.ndarray = dataset_base.std(axis=0)
+    std_base = np.where(std_base > 0.0, std_base, 1.0)  # guard against zero variance
 
-    z_sm: np.ndarray = (data_sm - mean_sm) / std_sm
-    z_eft: np.ndarray = (data_eft - mean_sm) / std_sm
+    z_base: np.ndarray = (dataset_base - mean_base) / std_base
+    z_shifted: np.ndarray = (dataset_shifted - mean_base) / std_base
 
     # Step 2: standardised mean shift
-    delta: np.ndarray = z_eft.mean(axis=0) - z_sm.mean(axis=0)
+    delta: np.ndarray = z_shifted.mean(axis=0) - z_base.mean(axis=0)
 
     # Step 3: correlation matrix from SM (biased estimator, consistent with paper)
-    fisher2: np.ndarray = np.cov(z_sm, rowvar=False, bias=True)
+    fisher2: np.ndarray = np.cov(z_base, rowvar=False, bias=True)
 
     # Step 4: solve I^(2) u = Delta, with optional ridge regularisation
     if regularisation > 0.0:
@@ -162,6 +205,26 @@ def compute_benchmark_direction(
     u: np.ndarray = u_unnormalised / norm
 
     return u, delta, fisher2, u_unnormalised
+
+def standardise_sample(sample: np.ndarray, mean: np.ndarray = None, std: np.ndarray = None) -> np.ndarray:
+    """Standardise a sample using its mean and standard deviation.
+    Parameters:
+    sample : np.ndarray
+        Input sample of shape (N, D).
+    mean : np.ndarray, optional
+        Mean to use for standardisation.
+    std : np.ndarray, optional
+        Standard deviation to use for standardisation.
+    If mean and std are not provided, they will be computed from the sample itself.
+    Returns:
+    np.ndarray
+        Standardised sample of shape (N, D).
+    """
+    if mean is None and std is None:
+        mean = sample.mean(axis=0)
+        std = sample.std(axis=0)
+    std = np.where(std > 0.0, std, 1.0)  # guard against zero variance
+    return (sample - mean) / std
 
 def sample_event(
     rng: np.random.Generator, model: EventModel, n_constituents: int
@@ -272,7 +335,6 @@ def greedy_selection_order(
 ) -> np.ndarray:
     selected = list(initial_core)
     remaining = set(range(len(benchmark_direction))) - set(selected)
-
     while remaining:
         best_feature = None
         best_score = None
@@ -285,12 +347,14 @@ def greedy_selection_order(
                 redundancy_beta,
             )
             if lambda_cubic > 0.0:
+                quad = score
+                print("Quadratic gain for feature", FEATURE_PLAIN[feature], "is", quad)
                 score += (
                     lambda_cubic
                     * cubic_rescale
                     * cubic_completion_gain(feature, selected, fisher3, benchmark_direction)
                 )
-
+                print("Cubic contribution for feature", FEATURE_PLAIN[feature], "is", score-quad)
             if (
                 best_score is None
                 or score > best_score + 1.0e-12
@@ -305,14 +369,18 @@ def greedy_selection_order(
     return np.array(selected, dtype=int)
 
 
-def summarize(data: np.ndarray, benchmark_direction: np.ndarray=None) -> dict:
-    mean = data.mean(axis=0)
-    std = data.std(axis=0)
-    zdata = (data - mean) / std
-
+def summarize(data: np.ndarray, benchmark_direction: np.ndarray=None, standardised: bool=False) -> dict:
+    #mean = data.mean(axis=0)
+    #std = data.std(axis=0)
+    #zdata = (data - mean) / std
+    if standardised:
+        zdata = data
+    else:
+        zdata = standardise_sample(data)
+    
     fisher2 = np.cov(zdata, rowvar=False, bias=True)
     fisher3 = np.einsum("ni,nj,nk->ijk", zdata, zdata, zdata) / len(zdata)
-    
+    fisher2_inv = np.linalg.pinv(fisher2)
     if benchmark_direction is None:
         print("No benchmark direction provided; using default physics-motivated values.")
         u = BENCHMARK_DIRECTION.copy()
@@ -325,7 +393,7 @@ def summarize(data: np.ndarray, benchmark_direction: np.ndarray=None) -> dict:
 
     quad_node_norm = quad_node / quad_node.sum()
     cubic_node_norm = cubic_node / cubic_node.sum()
-    multi_node = quad_node_norm + LAMBDA_CUBIC * cubic_node_norm
+    multi_node = LAMBDA_CUBIC * cubic_node_norm + quad_node_norm 
     common_quad_core = list(np.argsort(quad_node)[::-1][:COMMON_CORE_SIZE])
     core_remaining = sorted(set(range(len(FEATURE_LABELS))) - set(common_quad_core))
     common_cubic_core = list(np.argsort(multi_node)[::-1][:COMMON_CORE_SIZE])
@@ -340,7 +408,7 @@ def summarize(data: np.ndarray, benchmark_direction: np.ndarray=None) -> dict:
         for idx in core_remaining
     )
     cubic_rescale = core_quadratic_ref / core_cubic_ref if core_cubic_ref > 0.0 else 1.0
-    #import pdb;pdb.set_trace()
+    
     
     pair_rank = greedy_selection_order(
         initial_core=common_quad_core,
@@ -361,20 +429,26 @@ def summarize(data: np.ndarray, benchmark_direction: np.ndarray=None) -> dict:
         cubic_rescale=cubic_rescale,
     )
 
-    full_i2 = float(u @ fisher2 @ u)
+    full_i2 = float(u @ (fisher2_inv) @ u)
     full_i3 = float(np.einsum("i,j,k,ijk", u, u, u, fisher3))
     full_proj = zdata @ u
     full_kl = float(np.log(np.mean(np.exp(DELTA_KAPPA * full_proj))))
-    
     curves = {"graph": [], "hypergraph": []}
     selections = {}
+    
     for method, rank in [("graph", pair_rank), ("hypergraph", hyper_rank)]:
         for k in range(2, len(FEATURE_LABELS) + 1):
             mask = np.zeros(len(FEATURE_LABELS))
             mask[rank[:k]] = 1.0
+            idx = np.array(rank[:k], dtype=int)
+            u_sub = u[idx]
+            fisher2_sub = fisher2[np.ix_(idx, idx)]
+            fisher2_sub_inv = np.linalg.pinv(fisher2_sub)
+            i2 = float(u_sub @ fisher2_sub_inv @ u_sub)
             u_mask = u * mask
-            #import pdb;pdb.set_trace()
-            i2 = float(u_mask @ fisher2 @ u_mask)
+            #u_mask = np.abs(u_mask)
+
+            #i2 = float(u_mask @ (fisher2_inv) @ u_mask)
             i3 = float(np.einsum("i,j,k,ijk", u_mask, u_mask, u_mask, fisher3))
             kl = float(np.log(np.mean(np.exp(DELTA_KAPPA * (zdata @ u_mask)))))
             curves[method].append(
@@ -423,13 +497,15 @@ def summarize(data: np.ndarray, benchmark_direction: np.ndarray=None) -> dict:
             "graph": "common quadratic core plus greedy quadratic marginal gain",
             "hypergraph": "common quadratic core plus greedy quadratic and triplet-completion gain",
         },
-        "reference_mean": mean.tolist(),
-        "reference_std": std.tolist(),
-        "quadratic_node_score": quad_node.tolist(),
-        "cubic_node_score": cubic_node.tolist(),
+        #"reference_mean": mean.tolist(),
+        #"reference_std": std.tolist(),
+        "quadratic_node_score": quad_node_norm.tolist(),
+        "cubic_node_score": cubic_node_norm.tolist(),
         "multi_node_score": multi_node.tolist(),
         "pair_rank": rank_labels(pair_rank),
         "hyper_rank": rank_labels(hyper_rank),
+        "pair_rank_idx": pair_rank,
+        "hyper_rank_idx": hyper_rank,
         "full_coefficients": {
             "i2": full_i2,
             "i3": full_i3,
@@ -442,7 +518,7 @@ def summarize(data: np.ndarray, benchmark_direction: np.ndarray=None) -> dict:
     return results
 
 
-def make_constraint_figure(results: dict) -> None:
+def make_constraint_figure(results: dict, paths: RunPaths) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(9.6, 4.2))
 
     for method, color in [("graph", "#9b2c2c"), ("hypergraph", "#1f4f82")]:
@@ -483,24 +559,24 @@ def make_constraint_figure(results: dict) -> None:
     axes[1].legend(frameon=False, fontsize=8)
 
     fig.tight_layout()
-    fig.savefig(FIGURES_DIR / "eft_constraint_summary.pdf")
-    fig.savefig(WEB_DIR / "eft_constraint_summary.png", dpi=600)
+    fig.savefig(paths.figures_dir / "eft_constraint_summary.pdf")
+    fig.savefig(paths.web_dir / "eft_constraint_summary.png", dpi=600)
     plt.close(fig)
 
 
-def make_hypergraph_figure(results: dict) -> None:
-    fig, axes = plt.subplots(1, 2, figsize=(9.8, 4.2))
+def make_hypergraph_figure(results: dict, paths: RunPaths) -> None:
+    fig, axes = plt.subplots(1, 2, figsize=(17.4,8.3))
 
     x = np.arange(len(FEATURE_LABELS))
     width = 0.38
     quad = np.array(results["quadratic_node_score"])
     multi = np.array(results["multi_node_score"])
-
+    cubic = np.array(results["cubic_node_score"])
     axes[0].bar(x - width / 2, quad, width=width, color="#9b2c2c", label="Pairwise graph score")
-    axes[0].bar(x + width / 2, multi, width=width, color="#1f4f82", label="Multi-order score")
+    axes[0].bar(x + width / 2, cubic, width=width, color="#1f4f82", label="Cubic-hypergraph score")
     axes[0].set_xticks(x, FEATURE_LABELS, rotation=22, ha="right")
     axes[0].set_ylabel("Operator-aligned node score")
-    axes[0].set_title("Feature ranking in the $O_{tG}$ benchmark")
+    axes[0].set_title("Feature ranking")
     axes[0].grid(axis="y", alpha=0.25)
     axes[0].legend(frameon=False, fontsize=8)
 
@@ -515,48 +591,66 @@ def make_hypergraph_figure(results: dict) -> None:
     axes[1].grid(axis="x", alpha=0.25)
 
     fig.tight_layout()
-    fig.savefig(FIGURES_DIR / "eft_hypergraph_summary.pdf")
-    fig.savefig(WEB_DIR / "eft_hypergraph_summary.png", dpi=600)
+    fig.savefig(paths.figures_dir / "eft_hypergraph_summary.pdf")
+    fig.savefig(paths.web_dir / "eft_hypergraph_summary.png", dpi=600)
     plt.close(fig)
 
 
+_YAML = {
+    "ttbar_vs_wqq": ("configs/wqq.yaml",     "configs/ttbar_sm.yaml"),
+    "ttbar_eft":    ("configs/ttbar_sm.yaml", "configs/ttbar_eft.yaml"),
+}
+
+
 def main() -> None:
-    FIGURES_DIR.mkdir(exist_ok=True)
-    GENERATED_DIR.mkdir(exist_ok=True)
-    WEB_DIR.mkdir(exist_ok=True)
-    toy_data = generate_reference_sample()
-    observables={
-        "EEC_1": [0.03, 0.08],
-        "EEC_2":   [0.08, 0.16],
-        "EEC_3":   [0.16, 0.30],
-        "EEC_4":   [0.30, 0.80],
-        "ECF_e2b1":   (2, 1),        # e_2^(1)
-        "ECF_e2b2":   (2, 2),        # e_2^(2)
-        "ECF_e3b1":   (3, 1),        # e_3^(1)
-        "ECF_e3b2":   (3, 2),        # e_3^(2)   
-    }
-    toy_z = (toy_data - toy_data.mean(axis=0)) / toy_data.std(axis=0)
-    toy_fisher = np.cov(toy_z, rowvar=False, bias=True)
-    toy_delta = toy_fisher @ BENCHMARK_DIRECTION
-    toy_ev, toy_evec = np.linalg.eigh(toy_fisher)
-    data, _, _, _ = db.build_dataset(config_path="configs/data_sm.yaml",observables=observables, num_jets=100000, num_particles=25,seed=42) 
-    data_eft, _, _, _ = db.build_dataset(config_path="configs/data_eft.yaml", observables=observables, num_jets=100000, num_particles=25,seed=42)
-    # u_benchmark, delta, fisher2, _ = compute_benchmark_direction(data, data_eft, regularisation=0.0)
+    parser = argparse.ArgumentParser(description="Generate EFT constraint summary and hypergraph figures.")
+    parser.add_argument("--load", action="store_true", help="Load precomputed datasets instead of building them from scratch.")
+    parser.add_argument("--type", choices=["ttbar_vs_wqq", "ttbar_eft"], default="ttbar_vs_wqq", help="Type of comparison to perform.")
+    args = parser.parse_args()
 
-    u_benchmark = (data_eft.mean(axis=0) - data.mean(axis=0))/ data.std(axis=0)
+    paths = build_paths(args.type)
+    paths.makedirs()
+    data_yaml, shifted_yaml = _YAML[args.type]
 
-    u_benchmark /= np.linalg.norm(u_benchmark)
-    results = summarize(data, benchmark_direction=u_benchmark)
+    if args.load:
+        logging.info(f"Loading datasets from {paths.dataset_path} and {paths.dataset_shifted_path}")
+        dataset = np.load(paths.dataset_path)
+        dataset_shifted = np.load(paths.dataset_shifted_path)
+    else:
+        logging.info("Building datasets from scratch.")
+        dataset, _, _, _ = db.build_dataset(config_path=data_yaml, observables=OBSERVABLES, num_jets=100000, num_particles=25, seed=42)
+        dataset_shifted, _, _, _ = db.build_dataset(config_path=shifted_yaml, observables=OBSERVABLES, num_jets=100000, num_particles=25, seed=42)
+        np.save(paths.dataset_path, dataset)
+        np.save(paths.dataset_shifted_path, dataset_shifted)
+        logging.info(f"Saved datasets to {paths.dataset_path} and {paths.dataset_shifted_path} for future usage")
+    if args.type == "ttbar_vs_wqq":
+        joint_dataset = np.concatenate([dataset, dataset_shifted], axis=0)
+        joint_mean = joint_dataset.mean(axis=0)
+        joint_std = joint_dataset.std(axis=0)
+        dataset = (dataset - joint_mean) / joint_std
+        dataset_shifted = (dataset_shifted - joint_mean) / joint_std
+        u_benchmark = dataset_shifted.mean(axis=0) - dataset.mean(axis=0)
+        u_benchmark /= np.linalg.norm(u_benchmark)
+    elif args.type == "ttbar_eft":
+        dataset_mean = dataset.mean(axis=0)
+        dataset_std = dataset.std(axis=0)
+        dataset = (dataset - dataset_mean) / dataset_std
+        dataset_shifted = (dataset_shifted - dataset_mean) / dataset_std
+        u_benchmark = dataset_shifted.mean(axis=0) - dataset.mean(axis=0)
+        #u_benchmark /= 0.1# np.linalg.norm(u_benchmark)
+        joint_dataset = dataset
+    import pdb;pdb.set_trace()
+    results = summarize(joint_dataset, benchmark_direction=u_benchmark, standardised=True)
+    hyper_rank_idx = results["hyper_rank_idx"]
+    pair_rank_idx = results["pair_rank_idx"]
+    np.savez(paths.metapath, benchmark_direction=u_benchmark, hyper_rank_idx=hyper_rank_idx, pair_rank_idx=pair_rank_idx)
+    logging.info(f"Saved benchmark direction and feature ranks to {paths.metapath} for N = {len(joint_dataset)} total samples and D = {len(FEATURE_LABELS)} features.")
 
-    with (GENERATED_DIR / "eft_results.json").open("w", encoding="utf-8") as handle:
-        json.dump(results, handle, indent=2)
+    make_constraint_figure(results, paths)
+    make_hypergraph_figure(results, paths)
 
-    make_constraint_figure(results)
-    make_hypergraph_figure(results)
-
-    print(f"Wrote {(GENERATED_DIR / 'eft_results.json')}")
-    print(f"Wrote {(FIGURES_DIR / 'eft_constraint_summary.pdf')}")
-    print(f"Wrote {(FIGURES_DIR / 'eft_hypergraph_summary.pdf')}")
+    print(f"Wrote {paths.figures_dir / 'eft_constraint_summary.pdf'}")
+    print(f"Wrote {paths.figures_dir / 'eft_hypergraph_summary.pdf'}")
 
 
 def signal_decomposition(fisher2, delta, label):
