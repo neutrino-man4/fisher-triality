@@ -1,5 +1,5 @@
 """
-Joint QCD + TTBar observable dataset builder — importable module.
+Joint QCD + Signal observable dataset builder — importable module.
 
 Reads phase-space cuts and filesystem paths from a YAML config file.
 Computes an arbitrary set of EEC and ECF observables (specified by the
@@ -52,7 +52,7 @@ ConfigDict = Dict[str, Any]
 # ---------------------------------------------------------------------------
 
 _REQUIRED_CONFIG_KEYS: Dict[str, Sequence[str]] = {
-    "paths": ("qcd_base", "qcd_filename", "top_base", "top_filename"),
+    "paths": ("qcd_base", "qcd_filename", "signal_base", "signal_filename"),
     "cuts":  ("pt_cut", "mass_win_lo", "mass_win_hi"),
 }
 
@@ -62,7 +62,7 @@ def load_config(config_path: Union[str, pathlib.Path]) -> ConfigDict:
     Load and minimally validate a YAML configuration file.
 
     Expected top-level sections: ``paths``, ``cuts``, and optionally
-    ``dataset`` (for ``frac_top``) and ``compute`` (for ``chunk_size``).
+    ``dataset`` (for ``frac_signal``) and ``compute`` (for ``chunk_size``).
 
     Raises
     ------
@@ -89,7 +89,7 @@ def _safe_power(arr: np.ndarray, beta: float) -> np.ndarray:
     Element-wise ``arr ** beta``, returning 0 wherever ``arr == 0``.
 
     Avoids ``0 ** 0 = 1`` artefacts that would corrupt zero-padded entries
-    in the upper-triangular ΔR matrix.
+    in the upper-triangular DELTA_R matrix.
     """
     return np.where(arr > 0.0, np.power(arr, beta, where=arr > 0.0,
                                          out=np.zeros_like(arr)), 0.0)
@@ -104,11 +104,11 @@ def _compute_eec_batch(
     """
     EEC in a single angular bin, summed over unique pairs i < j.
 
-        EEC = Σ_{i<j,  bin_lo < ΔR_{ij} < bin_hi}  z_i z_j
+        EEC = SUM_{i<j,  bin_lo < DELTA_R_{ij} < bin_hi}  z_i z_j
 
     Parameters
     ----------
-    dr_upper : Upper-triangular pairwise ΔR, shape (B, P, P). Lower triangle
+    dr_upper : Upper-triangular pairwise DELTA_R, shape (B, P, P). Lower triangle
                and diagonal must be zero (pairs i < j only).
     z        : Normalised pT fractions, shape (B, P).
     bin_lo, bin_hi : Angular bin edges (exclusive).
@@ -128,11 +128,11 @@ def _compute_ecf2_batch(
     beta: float,
 ) -> np.ndarray:
     """
-    Two-point ECF:  e_2^β = Σ_{i<j}  z_i z_j  ΔR_{ij}^β.
+    Two-point ECF:  e_2^beta = SUM_{i<j}  z_i z_j  DELTA_R_{ij}^beta.
 
     Parameters
     ----------
-    dr_upper : Upper-triangular ΔR, shape (B, P, P).
+    dr_upper : Upper-triangular DELTA_R, shape (B, P, P).
     z        : Normalised pT fractions, shape (B, P).
     beta     : Angular exponent.
 
@@ -152,18 +152,18 @@ def _compute_ecf3_batch(
     """
     Three-point ECF via an O(P²) factored identity:
 
-        e_3^β = (1/6) Σ_{i,k} z_i z_k ΔR_{ik}^β  F_{ik}
+        e_3^beta = (1/6) SUM_{i,k} z_i z_k DELTA_R_{ik}^beta  F_{ik}
 
-    where  F_{ik} = Σ_j z_j  ΔR_{ij}^β  ΔR_{jk}^β,
+    where  F_{ik} = SUM_j z_j  DELTA_R_{ij}^beta  DELTA_R_{jk}^beta,
     computed as a batched matrix multiplication.
 
     The factor 1/6 = 1/3! corrects for the 6 permutations of each distinct
     triplet (i, j, k) in the unsymmetrised double sum.  Diagonal entries
-    ΔR_{ii} = 0 suppress degenerate two-index contributions automatically.
+    DELTA_R_{ii} = 0 suppress degenerate two-index contributions automatically.
 
     Parameters
     ----------
-    dr_full : Full symmetric ΔR (dr_upper + dr_upper^T), shape (B, P, P).
+    dr_full : Full symmetric DELTA_R (dr_upper + dr_upper^T), shape (B, P, P).
     z       : Normalised pT fractions, shape (B, P).
     beta    : Angular exponent.
 
@@ -173,8 +173,8 @@ def _compute_ecf3_batch(
     """
     Z_full: np.ndarray   = z[:, :, None] * z[:, None, :]
     dr_beta: np.ndarray  = _safe_power(dr_full, beta)               # (B, P, P)
-    A: np.ndarray        = dr_beta * z[:, None, :]                  # A[i,j] = z_j DR_{ij}^β
-    F: np.ndarray        = np.matmul(A, dr_beta)                    # F[i,k] = Σ_j z_j DR_{ij}^β DR_{jk}^β
+    A: np.ndarray        = dr_beta * z[:, None, :]                  # A[i,j] = z_j DR_{ij}^beta
+    F: np.ndarray        = np.matmul(A, dr_beta)                    # F[i,k] = SUM_j z_j DR_{ij}^beta DR_{jk}^beta
     return (Z_full * dr_beta * F).sum(axis=(1, 2)) / 6.0
 
 
@@ -186,8 +186,8 @@ def _make_latex_label(key: str, params: Union[List[float], Tuple]) -> str:
     """
     Generate a LaTeX-formatted label string for a single observable.
 
-    EEC keys  → ``$\\mathrm{EEC}_{[lo,\\,hi]}$``
-    ECF keys  → ``$e_N^{(\\beta)}$``
+    EEC keys  --> ``$\\mathrm{EEC}_{[lo,\\,hi]}$``
+    ECF keys  --> ``$e_N^{(\\beta)}$``
 
     Parameters
     ----------
@@ -225,8 +225,8 @@ def _compute_observables_batch(
 
     Parameters
     ----------
-    dr_upper    : Upper-triangular ΔR, shape (B, P, P).
-    dr_full     : Full symmetric ΔR (= dr_upper + dr_upper^T), shape (B, P, P).
+    dr_upper    : Upper-triangular DELTA_R, shape (B, P, P).
+    dr_full     : Full symmetric DELTA_R (= dr_upper + dr_upper^T), shape (B, P, P).
     z           : Normalised pT fractions, shape (B, P).
     observables : Ordered dict of observable specs.
 
@@ -284,7 +284,7 @@ def _discover_files(base: pathlib.Path, filename: str) -> List[pathlib.Path]:
     if not paths:
         raise FileNotFoundError(
             f"No files found matching {base / 'run_*' / filename}. "
-            "Check that qcd_filename / top_filename match the ntuplizer output."
+            "Check that qcd_filename / signal_filename match the ntuplizer output."
         )
     logger.info("Discovered %d file(s) under %s", len(paths), base)
     for p in paths:
@@ -313,7 +313,7 @@ def _collect_class_observables(
     Accumulate observable vectors for one jet class from HDF5 run files.
 
     Files are opened sequentially and closed as soon as *n_needed* passing
-    jets have been collected, avoiding unnecessary I/O.  The ΔR matrix and
+    jets have been collected, avoiding unnecessary I/O.  The DELTA_R matrix and
     pT fractions are computed on-the-fly from raw constituent kinematics
     (columns: deta, dphi, pT) rather than relying on pre-computed quantities.
 
@@ -321,7 +321,7 @@ def _collect_class_observables(
     ----------
     file_paths   : Ordered list of run HDF5 files.
     n_needed     : Number of passing jets to collect.
-    label        : Class integer (0 = QCD, 1 = TTBar).
+    label        : Class integer (0 = QCD, 1 = Signal).
     num_particles: Leading-pT constituents to use; all 100 if ≤ 0.
     observables  : Observable specification dict (see ``build_dataset``).
     pt_cut       : Minimum jet pT [GeV].
@@ -340,7 +340,7 @@ def _collect_class_observables(
     ------
     RuntimeError if all files are exhausted before reaching *n_needed*.
     """
-    class_tag: str = "TTBar" if label == 1 else "QCD"
+    class_tag: str = "Signal" if label == 1 else "QCD"
     use_all_p: bool = num_particles <= 0
     P: int = 100 if use_all_p else num_particles
 
@@ -381,12 +381,12 @@ def _collect_class_observables(
             if n_pass == 0:
                 logger.warning("  No jets pass cuts — skipping file.")
                 continue
-
+            
             # Read only P constituents (hyperslab on axes 1 and 2)
             constituents: np.ndarray = fh["jetConstituentsList"][:, :P, :]  # (n_jets, P, 3)
         
         constituents = constituents[mask]  # (n_pass, P, 3) after kinematic selection
-        # Build ΔR and pT fractions from raw constituent kinematics
+        # Build DELTA_R and pT fractions from raw constituent kinematics
         deta: np.ndarray    = constituents[..., 0].astype(np.float32)   # (n_pass, P)
         dphi: np.ndarray    = constituents[..., 1].astype(np.float32)
         part_pt: np.ndarray = constituents[..., 2].astype(np.float32)
@@ -454,12 +454,12 @@ def build_dataset(
     seed: int = 42,
 ) -> Tuple[np.ndarray, np.ndarray, Dict[str, str], Dict[str, Any]]:
     """
-    Build a joint QCD + TTBar observable dataset.
+    Build a joint QCD + Signal observable dataset.
 
     Reads filesystem paths and kinematic cuts from *config_path* (YAML).
     Computes the observables listed in *observables* from raw constituent
     kinematics, applies kinematic selection, and returns a balanced sample
-    according to the ``frac_top`` entry in the config file.
+    according to the ``frac_signal`` entry in the config file.
 
     Parameters
     ----------
@@ -470,15 +470,15 @@ def build_dataset(
         Ordered dict specifying which observables to compute.
 
         - **EEC** entries: ``"EEC_<name>": [bin_lo, bin_hi]``
-          Sums  z_i z_j  over pairs with  bin_lo < ΔR_{ij} < bin_hi.
+          Sums  z_i z_j  over pairs with  bin_lo < DELTA_R_{ij} < bin_hi.
         - **ECF** entries: ``"ECF_<name>": (N_points, beta)``
-          Computes the N-point ECF  e_N^β.  Supported: N ∈ {2, 3}.
+          Computes the N-point ECF  e_N^beta.  Supported: N ∈ {2, 3}.
 
         If *None*, a default four-observable set is used (narrow EEC,
         wide EEC, e_2^1, e_3^1) matching the original script.
     num_jets :
         Total jets in the output dataset (split between classes according
-        to ``frac_top`` in the config).
+        to ``frac_signal`` in the config).
     num_particles :
         Number of leading-pT constituents used to build observables.
         pT fractions are renormalised over exactly these P particles.
@@ -489,7 +489,7 @@ def build_dataset(
     Returns
     -------
     features : float32 array of shape (num_jets, F).
-    labels   : int8 array of shape (num_jets,).  0 = QCD, 1 = TTBar.
+    labels   : int8 array of shape (num_jets,).  0 = QCD, 1 = Signal.
     obs_labels : dict mapping each observable key to a LaTeX label string.
     metadata : Summary dict with all phase-space cuts and dataset parameters.
     """
@@ -501,10 +501,10 @@ def build_dataset(
     dataset_cfg: Dict[str, Any] = cfg.get("dataset", {})
     compute_cfg: Dict[str, Any] = cfg.get("compute", {})
 
-    qcd_base: pathlib.Path = pathlib.Path(paths_cfg["qcd_base"])
-    top_base: pathlib.Path = pathlib.Path(paths_cfg["top_base"])
-    qcd_filename: str      = paths_cfg["qcd_filename"]
-    top_filename: str      = paths_cfg["top_filename"]
+    qcd_base: pathlib.Path      = pathlib.Path(paths_cfg["qcd_base"])
+    signal_base: pathlib.Path   = pathlib.Path(paths_cfg["signal_base"])
+    qcd_filename: str           = paths_cfg["qcd_filename"]
+    signal_filename: str        = paths_cfg["signal_filename"]
 
     pt_cut:      float = float(cuts_cfg["pt_cut"])
     mass_win_lo: float = float(cuts_cfg["mass_win_lo"])
@@ -512,19 +512,19 @@ def build_dataset(
     idx_pt:      int   = int(cuts_cfg.get("idx_pt",     0))
     idx_sdmass:  int   = int(cuts_cfg.get("idx_sdmass", 5))
 
-    frac_top:   float = float(dataset_cfg.get("frac_top", 0.22))
-    chunk_size: int   = int(compute_cfg.get("chunk_size", 2000))
+    frac_signal: float = float(dataset_cfg.get("frac_signal", 0.22))
+    chunk_size:  int   = int(compute_cfg.get("chunk_size", 2000))
 
-    if not (0.0 <= frac_top <= 1.0):
-        raise ValueError(f"frac_top must be in [0, 1]; got {frac_top}.")
+    if not (0.0 <= frac_signal <= 1.0):
+        raise ValueError(f"frac_signal must be in [0, 1]; got {frac_signal}.")
     # Print logs
     logger.info("Configuration loaded from %s", config_path)
-    logger.info("Paths: QCD base=%s  QCD filename=%s  TTBar base=%s  TTBar filename=%s",
-                qcd_base, qcd_filename, top_base, top_filename)
+    logger.info("Paths: QCD base=%s  QCD filename=%s  Signal base=%s  Signal filename=%s",
+                qcd_base, qcd_filename, signal_base, signal_filename)
     logger.info("Cuts: pT > %.0f GeV  mass window = [%.0f, %.0f] GeV  idx_pt=%d  idx_sdmass=%d",
                 pt_cut, mass_win_lo, mass_win_hi, idx_pt, idx_sdmass)
-    logger.info("Dataset: num_jets=%d  frac_top=%.2f  num_particles (per jet)=%d  seed=%d",
-                num_jets, frac_top, num_particles, seed)
+    logger.info("Dataset: num_jets=%d  frac_signal=%.2f  num_particles (per jet)=%d  seed=%d",
+                num_jets, frac_signal, num_particles, seed)
     
     # ---- Default observables -------------------------------------------------
     if observables is None:
@@ -543,12 +543,12 @@ def build_dataset(
 
     # ---- Compute class sizes -------------------------------------------------
     rng: np.random.Generator = np.random.default_rng(seed)
-    n_top: int = round(frac_top * num_jets)
-    n_qcd: int = num_jets - n_top
+    n_signal: int = round(frac_signal * num_jets)
+    n_qcd:    int = num_jets - n_signal
 
     logger.info(
-        "Target: N=%d  TTBar=%d (%.0f%%)  QCD=%d (%.0f%%)  seed=%d",
-        num_jets, n_top, 100 * frac_top, n_qcd, 100 * (1 - frac_top), seed,
+        "Target: N=%d  Signal=%d (%.0f%%)  QCD=%d (%.0f%%)  seed=%d",
+        num_jets, n_signal, 100 * frac_signal, n_qcd, 100 * (1 - frac_signal), seed,
     )
 
     # ---- Collect observables per class ---------------------------------------
@@ -567,23 +567,23 @@ def build_dataset(
     all_labels_list: List[np.ndarray] = []
     
     # Print warnings for zero-sample edge cases
-    if n_qcd == 0 and n_top == 0:
+    if n_qcd == 0 and n_signal == 0:
         logger.warning("num_jets=0, exiting")
         sys.exit(0)
     elif n_qcd == 0:
-        logger.warning("num_jets > 0 but frac_top=1.0 — no QCD jets will be collected.")
-    elif n_top == 0:
-        logger.warning("num_jets > 0 but frac_top=0.0 — no TTBar jets will be collected.")
-    
-    if n_top > 0:
-        logger.info("=== Collecting TTBar jets ===")
-        top_files = _discover_files(top_base, top_filename)
-        obs_top, lbl_top = _collect_class_observables(
-            top_files, n_top, label=1, **common_kw
+        logger.warning("num_jets > 0 but frac_signal=1.0 — no QCD jets will be collected.")
+    elif n_signal == 0:
+        logger.warning("num_jets > 0 but frac_signal=0.0 — no Signal jets will be collected.")
+
+    if n_signal > 0:
+        logger.info("=== Collecting Signal jets ===")
+        signal_files = _discover_files(signal_base, signal_filename)
+        obs_signal, lbl_signal = _collect_class_observables(
+            signal_files, n_signal, label=1, **common_kw
         )
-        idx_t = rng.choice(len(obs_top), size=n_top, replace=False)
-        all_obs_list.append(obs_top[idx_t])
-        all_labels_list.append(lbl_top[idx_t])
+        idx_s = rng.choice(len(obs_signal), size=n_signal, replace=False)
+        all_obs_list.append(obs_signal[idx_s])
+        all_labels_list.append(lbl_signal[idx_s])
 
     if n_qcd > 0:
         logger.info("=== Collecting QCD jets ===")
@@ -604,7 +604,7 @@ def build_dataset(
     labels   = labels[perm]
 
     logger.info(
-        "Final dataset: shape=%s  TTBar fraction=%.4f",
+        "Final dataset: shape=%s  Signal fraction=%.4f",
         features.shape, labels.mean() if len(labels) else 0.0,
     )
 
@@ -615,9 +615,9 @@ def build_dataset(
         "pt_cut":        pt_cut,
         "mass_win_lo":   mass_win_lo,
         "mass_win_hi":   mass_win_hi,
-        "frac_top":      frac_top,
+        "frac_signal":   frac_signal,
         "seed":          seed,
-        "n_ttbar":       n_top,
+        "n_signal":      n_signal,
         "n_qcd":         n_qcd,
         "observables":   list(observables.keys()),
         "obs_labels":    obs_labels,
@@ -691,7 +691,7 @@ def main() -> None:
     arguments via ``--num-jets``, ``--num-particles``, ``--seed``.
     """
     parser = argparse.ArgumentParser(
-        description="Build a joint QCD+TTBar observable dataset and save to HDF5.",
+        description="Build a joint QCD+Signal observable dataset and save to HDF5.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -746,7 +746,7 @@ def main() -> None:
     header = f"{'Sample':<12}  " + "  ".join(f"{c:>14}" for c in col_names)
     sep = "-" * len(header)
     print(f"\n{sep}\n{header}\n{sep}")
-    for cls_name, cls_label in (("QCD-like", 0), ("Top-like", 1)):
+    for cls_name, cls_label in (("QCD-like", 0), ("Signal-like", 1)):
         mask = labels == cls_label
         if mask.any():
             means = features[mask].mean(axis=0)
