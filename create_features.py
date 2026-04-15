@@ -5,10 +5,10 @@ Discovers run_XY HDF5 files under the configured base paths, applies
 kinematic selection (pT > 300 GeV, 140 < sdmass < 200 GeV), computes
 four jet-level observables:
 
-    EEC_narrow  = Σ_{i<j, 0.06 < ΔR < 0.20}  z_i z_j
-    EEC_wide    = Σ_{i<j, 0.20 < ΔR < 0.80}  z_i z_j
-    e_2^(1)     = Σ_{i<j}        z_i z_j ΔR_ij                  (2-point ECF, β=1)
-    e_3^(1)     = Σ_{i<j<k}      z_i z_j z_k ΔR_ij ΔR_ik ΔR_jk (3-point ECF, β=1)
+    EEC_narrow  = SUM_{i<j, 0.06 < DELTA_R < 0.20}  z_i z_j
+    EEC_wide    = SUM_{i<j, 0.20 < DELTA_R < 0.80}  z_i z_j
+    e_2^(1)     = SUM_{i<j}        z_i z_j DELTA_R_ij                  (2-point ECF, beta=1)
+    e_3^(1)     = SUM_{i<j<k}      z_i z_j z_k DELTA_R_ij DELTA_R_ik DELTA_R_jk (3-point ECF, beta=1)
 
 and draws a class-balanced random sample (22 % TTBar, 78 % QCD) of the
 requested size.  The result is saved as an (N, 4) float32 array together
@@ -63,9 +63,9 @@ MASS_WIN_LO  : float = 140.0   # GeV  — lower edge of sdmass window
 MASS_WIN_HI  : float = 220.0   # GeV  — upper edge of sdmass window
 FRAC_TOP     : float = 0.22    # TTBar fraction in the final dataset
 
-DR_NARROW_LO : float = 0.06    # ΔR bin edges for EEC_narrow
+DR_NARROW_LO : float = 0.06    # DELTA_R bin edges for EEC_narrow
 DR_NARROW_HI : float = 0.20
-DR_WIDE_LO   : float = 0.20    # ΔR bin edges for EEC_wide
+DR_WIDE_LO   : float = 0.20    # DELTA_R bin edges for EEC_wide
 DR_WIDE_HI   : float = 0.80
 
 # Column indices in the 'jetFeatures' dataset (see JET_FEATURE_NAMES in ntuplizer)
@@ -81,7 +81,7 @@ COMPUTE_CHUNK : int = 2000
 # Observable computation
 # ---------------------------------------------------------------------------
 def compute_observables(
-    pair_dr   : np.ndarray,   # (N, P, P)  upper-triangular ΔR (i < j only), P ≤ 100
+    pair_dr   : np.ndarray,   # (N, P, P)  upper-triangular DELTA_R (i < j only), P ≤ 100
     pt_weights: np.ndarray,   # (N, P)     normalised pT fractions over P particles
     desc      : str = "",
 ) -> np.ndarray:              # (N, 4)     float64
@@ -90,31 +90,31 @@ def compute_observables(
 
     EEC bins
     --------
-    The stored pair_delta_R contains ΔR_{ij} only for i < j (upper triangle).
+    The stored pair_delta_R contains DELTA_R_{ij} only for i < j (upper triangle).
     Summing Z_{ij} over this mask counts each pair exactly once:
 
-        EEC_bin = Σ_{i<j, ΔR ∈ bin} z_i z_j
+        EEC_bin = SUM_{i<j, DELTA_R ∈ bin} z_i z_j
 
     e_2^(1)
     -------
-        e_2 = Σ_{i<j} z_i z_j ΔR_{ij}
+        e_2 = SUM_{i<j} z_i z_j DELTA_R_{ij}
 
     e_3^(1) — factored formula
     --------------------------
     Direct evaluation is O(P³) per jet.  The following O(P²) identity is used:
 
-        e_3 = (1/6) Σ_{i,k} z_i z_k ΔR_{ik} F_{ik}
+        e_3 = (1/6) SUM_{i,k} z_i z_k DELTA_R_{ik} F_{ik}
 
     where:
-        F_{ik} = Σ_j z_j ΔR_{ij} ΔR_{jk}   (computed as batched matmul)
+        F_{ik} = SUM_j z_j DELTA_R_{ij} DELTA_R_{jk}   (computed as batched matmul)
 
-    Using the full symmetric ΔR matrix (ΔR_full = DR + DR^T) ensures that
+    Using the full symmetric DELTA_R matrix (DELTA_R_full = DR + DR^T) ensures that
     all six permutations of distinct index triplets (i, j, k) are captured,
-    while diagonal entries ΔR_{ii} = 0 suppress degenerate pairs automatically.
+    while diagonal entries DELTA_R_{ii} = 0 suppress degenerate pairs automatically.
 
     Parameters
     ----------
-    pair_dr    : Upper-triangular pairwise ΔR, shape (N, P, P), float32.
+    pair_dr    : Upper-triangular pairwise DELTA_R, shape (N, P, P), float32.
                  P is the number of particles used (≤ 100).
     pt_weights : Per-constituent pT fractions normalised over P particles,
                  shape (N, P), float32.
@@ -134,20 +134,20 @@ def compute_observables(
         dr : np.ndarray = pair_dr[lo:hi].astype(np.float64)    # (B, P, P) upper tri
         z  : np.ndarray = pt_weights[lo:hi].astype(np.float64) # (B, P)
 
-        # Full symmetric ΔR matrix (needed for the e_3 factorisation)
+        # Full symmetric DELTA_R matrix (needed for the e_3 factorisation)
         dr_full : np.ndarray = dr + np.transpose(dr, (0, 2, 1)) # (B, P, P)
 
         # REMINDER AT THIS POINT !!!
-        # dr: upper-triangular ΔR (i < j only), shape (B, P, P)
-        # dr_full: full symmetric ΔR, shape (B, P, P)
+        # dr: upper-triangular DELTA_R (i < j only), shape (B, P, P)
+        # dr_full: full symmetric DELTA_R, shape (B, P, P)
         # z: normalised pT fractions, shape (B, P)
         
         # Outer weight product Z[n,i,j] = z[n,i] · z[n,j]
         Z_full : np.ndarray = z[:, :, None] * z[:, None, :]     # (B, P, P)
 
-        # A[n,i,j] = ΔR_full[n,i,j] · z[n,j]   (broadcast z along axis 1)
+        # A[n,i,j] = DELTA_R_full[n,i,j] · z[n,j]   (broadcast z along axis 1)
         A : np.ndarray = dr_full * z[:, None, :]                # (B, P, P)
-        # F[n,i,k] = Σ_j z[n,j] ΔR_full[n,i,j] ΔR_full[n,j,k]
+        # F[n,i,k] = SUM_j z[n,j] DELTA_R_full[n,i,j] DELTA_R_full[n,j,k]
         F : np.ndarray = np.matmul(A, dr_full)                  # (B, P, P)
         
         #import pdb;pdb.set_trace()
@@ -161,7 +161,7 @@ def compute_observables(
         out[lo:hi, 2] = (Z_full * dr).sum(axis=(1, 2))
 
         # ---- e_3^(1) via factored O(P²) formula ------------------------------
-        # e3 = (1/6) Σ_{i,k} z_i z_k ΔR_full[i,k] F[i,k]
+        # e3 = (1/6) SUM_{i,k} z_i z_k DELTA_R_full[i,k] F[i,k]
         out[lo:hi, 3] = (Z_full * dr_full * F).sum(axis=(1, 2)) / 6.0
         # ---- e_3^(1) via explicit triple loop ------------------------------------
         # B  : int        = hi - lo
@@ -228,8 +228,8 @@ def collect_observables(
     When *num_particles* > 0, only the first *num_particles* constituents are
     used (the ntuplizer stores them in pT-descending order).  pT fractions are
     recomputed from the raw constituent pT values of those P particles so that
-    the normalisation denominator Σᵢ pTᵢ  (i = 0 … P-1) is self-consistent.
-    The pairwise ΔR matrix is sliced to the [P × P] upper-left submatrix,
+    the normalisation denominator SUMᵢ pTᵢ  (i = 0 … P-1) is self-consistent.
+    The pairwise DELTA_R matrix is sliced to the [P × P] upper-left submatrix,
     which h5py reads directly as a hyperslab without loading the full 100×100.
 
     When *num_particles* ≤ 0, the pre-stored constituent_pt_weight array and
@@ -296,7 +296,7 @@ def collect_observables(
             dphi     : np.ndarray = constituents[..., 1].astype(np.float32)
             part_pt  : np.ndarray = constituents[..., 2].astype(np.float32)
 
-            # Compute upper-triangular pairwise ΔR in situ — O(P²), P=18 → trivial
+            # Compute upper-triangular pairwise DELTA_R in situ — O(P²), P=18 → trivial
             deta_diff : np.ndarray = deta[:, :, None] - deta[:, None, :]       # (n_pass, P, P)
             dphi_diff : np.ndarray = dphi[:, :, None] - dphi[:, None, :]
             pair_dr   : np.ndarray = np.sqrt(deta_diff**2 + dphi_diff**2)
