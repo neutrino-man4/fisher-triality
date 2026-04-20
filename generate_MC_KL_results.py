@@ -126,8 +126,8 @@ def summarize(data: np.ndarray, labels: np.ndarray) -> dict:
     top = data[labels == 1]
     mean = data.mean(axis=0)
     std = data.std(axis=0)
-    #zdata = standardize(data)
-    zdata = whiten(data)
+    zdata = standardize(data)
+    #zdata = whiten(data)
     zqcd = zdata[labels == 0]
     ztop = zdata[labels == 1]
 
@@ -278,9 +278,9 @@ def make_hypergraph_figure(results: dict, metadata: dict) -> None:
         r"$N_\mathrm{constituents} = " + f"{metadata['num_particles']}, " + r"N_\mathrm{events} = " + f"{metadata['num_events']}" + "$",
         ha="center", fontsize=7)
     fig.tight_layout()
-    fig.savefig(FIGURES_DIR / "MC_hypergraph_summary.pdf")
-    fig.savefig(FIGURES_DIR / "MC_hypergraph_summary.png", dpi=500)
-    fig.savefig(WEB_DIR / "MC_hypergraph_summary.png", dpi=500)
+    fig.savefig(FIGURES_DIR / "MC_hypergraph_summary_standardized.pdf")
+    fig.savefig(FIGURES_DIR / "MC_hypergraph_summary_standardized.png", dpi=500)
+    fig.savefig(WEB_DIR / "MC_hypergraph_summary_standardized.png", dpi=500)
 
     plt.close(fig)
 
@@ -317,9 +317,9 @@ def main() -> None:
     make_hypergraph_figure(results, metadata)
     #import pdb;pdb.set_trace()
     
-    print(f"Wrote {(GENERATED_DIR / 'MC_results.json').relative_to(ROOT)}")
-    print(f"Wrote {(FIGURES_DIR / 'MC_kl_comparison.pdf').relative_to(ROOT)}")
-    print(f"Wrote {(FIGURES_DIR / 'MC_hypergraph_summary.pdf').relative_to(ROOT)}")
+    #print(f"Wrote {(GENERATED_DIR / 'MC_results.json').relative_to(ROOT)}")
+    #print(f"Wrote {(FIGURES_DIR / 'MC_kl_comparison.pdf').relative_to(ROOT)}")
+    #print(f"Wrote {(FIGURES_DIR / 'MC_hypergraph_summary.pdf').relative_to(ROOT)}")
     
 
 if __name__ == "__main__":
