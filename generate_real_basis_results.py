@@ -23,6 +23,7 @@ import json
 import os
 from itertools import combinations
 from pathlib import Path
+import KL_compute as klc#precision_matrix_KL, precompute_full_fisher_info
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
 os.environ.setdefault("XDG_CACHE_HOME", "/tmp")
@@ -53,6 +54,10 @@ EEC_EDGES = [
     0.02, 0.035, 0.05, 0.065, 0.08, 0.10, 0.12, 0.145, 0.17,
     0.20, 0.24, 0.28, 0.33, 0.39, 0.46, 0.54, 0.63, 0.73, 0.85,
 ]
+EEC_EDGES = [
+    0.02, 0.035, 0.05, 0.065, 0.08, 0.10, 0.12, 0.145, 0.17,
+    0.20, 0.24, 0.28, 0.33, 0.39, 0.46, 0.54, 0.63, 0.73, 0.85,
+]
 EEC_BINS = list(zip(EEC_EDGES[:-1], EEC_EDGES[1:]))
 E2_BETAS = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0]
 E3_BETAS = [0.5, 0.75, 1.0, 1.5, 2.0, 3.0]
@@ -74,7 +79,7 @@ N_PARTICLES  = 25        # leading constituents per jet
 CHUNK_SIZE   = 500       # batch size for feature computation
 DELTA_PROBE  = 0.55
 LAMBDA_BASIS = 3.0
-CURVE_KS     = list(range(6, 33, 2))
+CURVE_KS     = list(range(6, 21, 2))
 SUMMARY_K    = 16
 
 # Human-readable titles keyed by the deformationNames stored in the HDF5.
@@ -87,6 +92,7 @@ TASK_TITLE_MAP = {
     "inter_prong_bridge":  "Inter-prong bridge",
     "soft_4th_prong":      "Soft fourth prong",
 }
+TASK_IDX = {name: idx for idx, name in enumerate(TASK_TITLE_MAP.keys())}
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +207,7 @@ def load_reference_data(config_path: str, num_jets: int, num_particles: int) -> 
         idx_pt=int(cuts.get("idx_pt", 0)),
         idx_sdmass=int(cuts.get("idx_sdmass", 5)),
     )
-
+    
     print(f"Loaded {len(part_pt)} jets with {part_pt.shape[1]} constituents each.")
     print("Computing observables...")
 
@@ -220,7 +226,7 @@ def load_reference_data(config_path: str, num_jets: int, num_particles: int) -> 
 # Core analysis — mirrors summarize() in generate_basis_results.py
 # ---------------------------------------------------------------------------
 
-def summarize(features: np.ndarray, masks: np.ndarray, mask_names: list[str]) -> dict:
+def summarize(features: np.ndarray, masks: np.ndarray, mask_names: list[str], *, mean: bool = False) -> dict:
     """
     Run the full basis-design study on a pre-computed feature matrix.
 
@@ -234,22 +240,27 @@ def summarize(features: np.ndarray, masks: np.ndarray, mask_names: list[str]) ->
     reference_std  = features.std(axis=0)
     reference_std  = np.where(reference_std > 0.0, reference_std, 1.0)
     zref = (features - reference_mean) / reference_std
-
     fisher2 = np.cov(zref, rowvar=False, bias=True)
     fisher3 = np.einsum("ni,nj,nk->ijk", zref, zref, zref) / len(zref)
-
-    # Task directions from deformation masks
+    #Task directions from deformation masks
     task_directions = []
     task_direction_dict = {}
     task_titles = {}
-
-    for col_idx, task_name in enumerate(mask_names):
+    #mask_names = ['collinear_hardening', 'wide_angle', 'opening_angle']#, 'prong_asymmetry', 'inter_prong_bridge', 'soft_4th_prong']
+    for task_name in mask_names:
+        col_idx = TASK_IDX.get(task_name)
+        print(f"Processing task '{task_name}' (column {col_idx})...")
         task_mask = masks[:, col_idx]
         if task_mask.sum() == 0:
             raise RuntimeError(f"Deformation mask '{task_name}' selects no jets.")
-
         masked_mean = features[task_mask].mean(axis=0)
+        base_mean = features[~task_mask].mean(axis=0)
+        base_std = features[~task_mask].std(axis=0)
+        
+        #import pdb; pdb.set_trace()
         delta = (masked_mean - reference_mean) / reference_std
+        #delta = (masked_mean - base_mean) / base_std
+        
         norm = np.linalg.norm(delta)
         if norm < 1e-15:
             raise RuntimeError(f"Zero-norm direction for task '{task_name}'.")
@@ -260,7 +271,8 @@ def summarize(features: np.ndarray, masks: np.ndarray, mask_names: list[str]) ->
         task_titles[task_name] = TASK_TITLE_MAP.get(task_name, task_name)
 
     task_directions = np.array(task_directions)
-
+    full_info = klc.precompute_full_fisher_info(task_directions, fisher2)
+    full_cubic_kl = klc.precompute_full_cubic_kl(task_directions, fisher2, fisher3)
     full_exact_kl = np.array(
         [
             float(np.log(np.mean(np.exp(DELTA_PROBE * (zref @ direction)))))
@@ -281,8 +293,11 @@ def summarize(features: np.ndarray, masks: np.ndarray, mask_names: list[str]) ->
     )
     cubic_contract = np.einsum("abc,mb,mc->ma", fisher3, task_directions, task_directions)
     cubic_node_score = np.mean(np.abs(task_directions * cubic_contract), axis=0)
-    print("Quadratic node scores:", quadratic_node_score/quadratic_node_score.sum())
-    print("Cubic node scores:", cubic_node_score/cubic_node_score.sum())
+    #print("Quadratic node scores:", quadratic_node_score/quadratic_node_score.sum())
+    #print("Cubic node scores:", cubic_node_score/cubic_node_score.sum())
+    c1 = cubic_node_score / cubic_node_score.sum()
+    q1 = quadratic_node_score / quadratic_node_score.sum()
+    print("Ratio of cubic to quadratic node scores (normalized):", c1 / q1)
     multi_node_score = (
         quadratic_node_score / quadratic_node_score.sum()
         + LAMBDA_BASIS * cubic_node_score / cubic_node_score.sum()
@@ -315,50 +330,126 @@ def summarize(features: np.ndarray, masks: np.ndarray, mask_names: list[str]) ->
 
     # Greedy feature selection
     max_k = max(CURVE_KS)
-    graph_rank = greedy_selection(
-        n_features=len(FEATURE_LABELS),
-        max_k=max_k,
-        objective=lambda sel: quadratic_subset_fraction(sel, quadratic_terms, full_quadratic),
-    )
-    hyper_rank = greedy_selection(
-        n_features=len(FEATURE_LABELS),
-        max_k=max_k,
-        objective=lambda sel: (
-            quadratic_subset_fraction(sel, quadratic_terms, full_quadratic)
-            + LAMBDA_BASIS * aligned_triplet_coverage(sel, aligned_triplets, total_aligned_triplet_weight)
-        ),
-    )
 
-    # Retention curves
-    curves = {"graph": [], "hypergraph": []}
-    summary_selection = {}
-    for method, rank in [("graph", graph_rank), ("hypergraph", hyper_rank)]:
-        for k in CURVE_KS:
-            selected = set(rank[:k])
-            mean_retained_kl, median_retained_kl, per_task_kl = exact_retained_kl(
-                selected, zref, task_directions, full_exact_kl
+    if mean:
+        graph_rank = greedy_selection(
+            n_features=len(FEATURE_LABELS),
+            max_k=max_k,
+            objective=lambda sel: quadratic_subset_fraction(sel, quadratic_terms, full_quadratic),
+        )
+        hyper_rank = greedy_selection(
+            n_features=len(FEATURE_LABELS),
+            max_k=max_k,
+            objective=lambda sel: (
+                quadratic_subset_fraction(sel, quadratic_terms, full_quadratic)
+                + LAMBDA_BASIS * aligned_triplet_coverage(sel, aligned_triplets, total_aligned_triplet_weight)
+            ),
+        )
+
+        curves = {"graph": [], "hypergraph": []}
+        summary_selection = {}
+        for method, rank in [("graph", graph_rank), ("hypergraph", hyper_rank)]:
+            for k in CURVE_KS:
+                selected = set(rank[:k])
+                mean_retained_kl, median_retained_kl, per_task_kl = exact_retained_kl(
+                    selected, zref, task_directions, full_exact_kl
+                )
+                mean_r, median_r, per_task = klc.precision_matrix_KL(
+                    selected, task_directions, fisher2, full_fisher_info=full_info
+                )
+                mean_r3, median_r3, per_task_r3 = klc.cubic_pitman_ratio(
+                    selected, task_directions, fisher2, fisher3, full_cubic_kl=full_cubic_kl
+                )
+                aligned_coverage = aligned_triplet_coverage(
+                    selected, aligned_triplets, total_aligned_triplet_weight
+                )
+                curves[method].append(
+                    {
+                        "k": k,
+                        "features": rank_labels(rank[:k]),
+                        "quadratic_objective": quadratic_subset_fraction(
+                            selected, quadratic_terms, full_quadratic
+                        ),
+                        "selection_objective": (
+                            quadratic_subset_fraction(selected, quadratic_terms, full_quadratic)
+                            + (LAMBDA_BASIS * aligned_coverage if method == "hypergraph" else 0.0)
+                        ),
+                        "mean_retained_kl": mean_r3,#mean_retained_kl,
+                        "median_retained_kl": median_r3,#median_retained_kl,
+                        "per_task_retained_kl": per_task_r3,#per_task_kl,
+                        "aligned_triplet_coverage": float(aligned_coverage),
+                    }
+                )
+                #import pdb;pdb.set_trace()
+            summary_selection[method] = next(item for item in curves[method] if item["k"] == SUMMARY_K)
+
+    else:
+        # Independent greedy selection per task — no averaging over tasks
+        def _quad_single(sel: set, t: int) -> float:
+            if not sel:
+                return 0.0
+            idx = np.array(sorted(sel), dtype=int)
+            return quadratic_terms[t][np.ix_(idx, idx)].sum() / full_quadratic[t]
+
+        per_task_triplets: list[list[dict]] = []
+        per_task_triplet_weight: list[float] = []
+        for t in range(len(task_directions)):
+            triplets_t = []
+            for i, j, k in combinations(range(len(FEATURE_LABELS)), 3):
+                score = abs(
+                    task_directions[t, i]
+                    * task_directions[t, j]
+                    * task_directions[t, k]
+                    * fisher3[i, j, k]
+                )
+                triplets_t.append({"indices": [i, j, k], "aligned_score": score})
+            triplets_t.sort(key=lambda x: x["aligned_score"], reverse=True)
+            per_task_triplets.append(triplets_t)
+            per_task_triplet_weight.append(sum(x["aligned_score"] for x in triplets_t))
+
+        graph_ranks: dict[str, list[int]] = {}
+        hyper_ranks: dict[str, list[int]] = {}
+        for t, task_name in enumerate(mask_names):
+            graph_ranks[task_name] = greedy_selection(
+                n_features=len(FEATURE_LABELS),
+                max_k=max_k,
+                objective=lambda sel, t=t: _quad_single(sel, t),
             )
-            aligned_coverage = aligned_triplet_coverage(
-                selected, aligned_triplets, total_aligned_triplet_weight
+            hyper_ranks[task_name] = greedy_selection(
+                n_features=len(FEATURE_LABELS),
+                max_k=max_k,
+                objective=lambda sel, t=t: (
+                    _quad_single(sel, t)
+                    + LAMBDA_BASIS * aligned_triplet_coverage(
+                        sel, per_task_triplets[t], per_task_triplet_weight[t]
+                    )
+                ),
             )
-            curves[method].append(
-                {
-                    "k": k,
-                    "features": rank_labels(rank[:k]),
-                    "quadratic_objective": quadratic_subset_fraction(
-                        selected, quadratic_terms, full_quadratic
-                    ),
-                    "selection_objective": (
-                        quadratic_subset_fraction(selected, quadratic_terms, full_quadratic)
-                        + (LAMBDA_BASIS * aligned_coverage if method == "hypergraph" else 0.0)
-                    ),
-                    "mean_retained_kl": mean_retained_kl,
-                    "median_retained_kl": median_retained_kl,
-                    "per_task_retained_kl": per_task_kl,
-                    "aligned_triplet_coverage": float(aligned_coverage),
-                }
-            )
-        summary_selection[method] = next(item for item in curves[method] if item["k"] == SUMMARY_K)
+
+        curves: dict[str, dict] = {"graph": {}, "hypergraph": {}}
+        summary_selection: dict[str, dict] = {"graph": {}, "hypergraph": {}}
+        for method, ranks in [("graph", graph_ranks), ("hypergraph", hyper_ranks)]:
+            for t, task_name in enumerate(mask_names):
+                rank = ranks[task_name]
+                task_curve = []
+                for k in CURVE_KS:
+                    selected = set(rank[:k])
+                    mask_vec = np.zeros(zref.shape[1])
+                    mask_vec[list(selected)] = 1.0
+                    subset_kl = float(
+                        np.log(np.mean(np.exp(DELTA_PROBE * (zref @ (task_directions[t] * mask_vec)))))
+                    )
+                    task_curve.append(
+                        {
+                            "k": k,
+                            "features": rank_labels(rank[:k]),
+                            "retained_kl": subset_kl / full_exact_kl[t],
+                        }
+                    )
+                curves[method][task_name] = task_curve
+                summary_selection[method][task_name] = next(
+                    item for item in task_curve if item["k"] == SUMMARY_K
+                )
 
     # Per-task feature responses
     task_responses = {}
@@ -398,8 +489,15 @@ def summarize(features: np.ndarray, masks: np.ndarray, mask_names: list[str]) ->
         "quadratic_node_score": quadratic_node_score.tolist(),
         "cubic_node_score": cubic_node_score.tolist(),
         "multi_node_score": multi_node_score.tolist(),
-        "graph_rank": rank_labels(graph_rank),
-        "hyper_rank": rank_labels(hyper_rank),
+        "mean_mode": mean,
+        **(
+            {"graph_rank": rank_labels(graph_rank), "hyper_rank": rank_labels(hyper_rank)}
+            if mean
+            else {
+                "graph_ranks": {n: rank_labels(graph_ranks[n]) for n in mask_names},
+                "hyper_ranks": {n: rank_labels(hyper_ranks[n]) for n in mask_names},
+            }
+        ),
         "curves": curves,
         "summary_selection": summary_selection,
         "top_aligned_triplets": aligned_triplets[:10],
@@ -413,26 +511,38 @@ def summarize(features: np.ndarray, masks: np.ndarray, mask_names: list[str]) ->
 def make_figure(results: dict) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(10.0, 4.2))
 
+    mean_mode = results.get("mean_mode", True)
     for method, color in [("graph", "#9b2c2c"), ("hypergraph", "#1f4f82")]:
-        curve = results["curves"][method]
-        ks         = [item["k"]                   for item in curve]
-        mean_kl    = [item["mean_retained_kl"]    for item in curve]
-        median_kl  = [item["median_retained_kl"]  for item in curve]
-        trip_cov   = [item["aligned_triplet_coverage"] for item in curve]
-
         label = "Pairwise graph" if method == "graph" else "Fisher hypergraph"
+        if mean_mode:
+            curve    = results["curves"][method]
+            ks       = [item["k"]                        for item in curve]
+            mean_kl  = [item["mean_retained_kl"]         for item in curve]
+            median_kl = [item["median_retained_kl"]      for item in curve]
+            trip_cov = [item["aligned_triplet_coverage"] for item in curve]
+        else:
+            task_names = results["task_names"]
+            ks = [item["k"] for item in results["curves"][method][task_names[0]]]
+            all_kls = np.array([
+                [item["retained_kl"] for item in results["curves"][method][tn]]
+                for tn in task_names
+            ])
+            mean_kl   = all_kls.mean(axis=0).tolist()
+            median_kl = np.median(all_kls, axis=0).tolist()
+            trip_cov  = [0.0] * len(ks)
+
         axes[0].plot(ks, mean_kl,   color=color, linewidth=2.2, label=f"{label}: mean")
         axes[0].plot(ks, median_kl, color=color, linewidth=2.0,
                      linestyle="--", label=f"{label}: median")
         axes[1].plot(ks, trip_cov,  color=color, linewidth=2.2, label=label)
 
     axes[0].set_xlabel("Retained observables")
-    axes[0].set_ylabel(r"Retained local KL fraction")
+    axes[0].set_ylabel(r"Retained local $R_3$ fraction")
     axes[0].set_xticks(CURVE_KS)
-    axes[0].set_ylim(0.0, 1.02)
+    axes[0].set_ylim(0.35, 1.02)
     axes[0].set_title("Retention across six nearby deformations")
     axes[0].grid(alpha=0.25)
-    axes[0].legend(frameon=False, fontsize=8)
+    axes[0].legend(frameon=False, fontsize=8, loc="lower right")
 
     axes[1].set_xlabel("Retained observables")
     axes[1].set_ylabel("Aligned triplet coverage")
@@ -452,21 +562,29 @@ def make_separate_figures(results: dict) -> None:
     """One PDF per deformation task showing per-task retained KL vs k."""
     task_names = results["task_names"]
     task_titles = results["task_titles"]
-    ks = [item["k"] for item in results["curves"]["graph"]]
+    mean_mode = results.get("mean_mode", True)
+
+    if mean_mode:
+        ks = [item["k"] for item in results["curves"]["graph"]]
+    else:
+        ks = [item["k"] for item in results["curves"]["graph"][task_names[0]]]
 
     for task_idx, task_name in enumerate(task_names):
         fig, ax = plt.subplots(figsize=(5.5, 4.2))
 
         for method, color in [("graph", "#9b2c2c"), ("hypergraph", "#1f4f82")]:
-            per_task = [
-                item["per_task_retained_kl"][task_idx]
-                for item in results["curves"][method]
-            ]
+            if mean_mode:
+                per_task = [
+                    item["per_task_retained_kl"][task_idx]
+                    for item in results["curves"][method]
+                ]
+            else:
+                per_task = [item["retained_kl"] for item in results["curves"][method][task_name]]
             label = "Pairwise graph" if method == "graph" else "Fisher hypergraph"
             ax.plot(ks, per_task, color=color, linewidth=2.2, label=label)
 
         ax.set_xlabel("Retained observables")
-        ax.set_ylabel("Retained local KL fraction")
+        ax.set_ylabel(r"Retained local $R_3$ fraction")
         ax.set_xticks(ks)
         ax.set_ylim(0.0, 1.02)
         ax.set_title(task_titles.get(task_name, task_name))
@@ -518,7 +636,12 @@ def parse_args() -> argparse.Namespace:
         help=f"Batch size for observable computation (default: {CHUNK_SIZE}).",
     )
     parser.add_argument(
-        "--separate",
+        "--mean",
+        action="store_true",
+        help="Average task objectives in greedy selection (default: independent per-task selection).",
+    )
+    parser.add_argument(
+        "--separate-plots",
         action="store_true",
         help="Save one PDF per deformation task instead of the combined mean/median figure.",
     )
@@ -537,16 +660,17 @@ def main() -> None:
     features, masks, mask_names = load_reference_data(
         args.config, args.num_jets, args.num_particles
     )
+    mask_names = ["opening_angle", "inter_prong_bridge", "soft_4th_prong"]
     print(f"Feature matrix: {features.shape}  |  masks: {masks.shape}")
     print(f"Deformation tasks: {mask_names}")
     print("Running basis-design analysis...")
-    results = summarize(features, masks, mask_names)
+    results = summarize(features, masks, mask_names, mean=args.mean)
 
     out_json = GENERATED_DIR / "basis_results_real.json"
     with out_json.open("w", encoding="utf-8") as fh:
         json.dump(results, fh, indent=2)
 
-    if args.separate:
+    if args.separate_plots:
         make_separate_figures(results)
     else:
         make_figure(results)
