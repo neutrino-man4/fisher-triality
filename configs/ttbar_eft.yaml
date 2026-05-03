@@ -6,8 +6,8 @@
 paths:
   qcd_base:     /ceph/abal/QFIT/MC/HDF5/qcd_dijet
   qcd_filename: qcd_dijet.h5
-  signal_base:     /ceph/abal/QFIT/MC/HDF5/TTBar_SMEFT
-  signal_filename: TTBar_SMEFT.h5
+  signal_base:     /ceph/abal/QFIT/MC/HDF5/TTBar_SMEFT_cTG_0p1/
+  signal_filename: TTBar_SMEFT_cTG_0p1.h5
 
 # Kinematic selection applied to jetFeatures columns.
 # idx_pt and idx_sdmass default to 0 and 5 respectively if omitted.
