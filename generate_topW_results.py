@@ -549,13 +549,13 @@ def make_constraint_figure(results: dict, paths: RunPaths) -> None:
     axes[1].set_ylabel(r"$\Delta\kappa_{95}/\Delta\kappa_{95}^{\rm full}$")
     axes[1].set_xticks(range(2, len(FEATURE_LABELS) + 1))
     axes[1].set_ylim(0.95, 2.25)
-    axes[1].set_title("Relative local EFT interval")
+    axes[1].set_title("Relative local interval")
     axes[1].grid(alpha=0.25)
     axes[1].legend(frameon=False, fontsize=8)
 
     fig.tight_layout()
-    fig.savefig(paths.figures_dir / "eft_constraint_summary.pdf")
-    fig.savefig(paths.web_dir / "eft_constraint_summary.png", dpi=600)
+    fig.savefig(paths.figures_dir / "prong_constraint_summary.pdf")
+    fig.savefig(paths.web_dir / "prong_constraint_summary.png", dpi=600)
     plt.close(fig)
 
 
@@ -582,12 +582,12 @@ def make_hypergraph_figure(results: dict, paths: RunPaths) -> None:
     axes[1].barh(labels, values, color=colors)
     axes[1].invert_yaxis()
     axes[1].set_xlabel(r"$|u_a u_b u_c\,I^{(3)}_{abc}|$")
-    axes[1].set_title("Leading EFT-sensitive 3-hyperedges")
+    axes[1].set_title("Leading substructure-sensitive 3-hyperedges")
     axes[1].grid(axis="x", alpha=0.25)
 
     fig.tight_layout()
-    fig.savefig(paths.figures_dir / "eft_hypergraph_summary.pdf")
-    fig.savefig(paths.web_dir / "eft_hypergraph_summary.png", dpi=600)
+    fig.savefig(paths.figures_dir / "prong_hypergraph_summary.pdf")
+    fig.savefig(paths.web_dir / "prong_hypergraph_summary.png", dpi=600)
     plt.close(fig)
 
 
@@ -636,8 +636,8 @@ def main() -> None:
     make_constraint_figure(results, paths)
     make_hypergraph_figure(results, paths)
 
-    print(f"Wrote {paths.figures_dir / 'eft_constraint_summary.pdf'}")
-    print(f"Wrote {paths.figures_dir / 'eft_hypergraph_summary.pdf'}")
+    print(f"Wrote {paths.figures_dir / 'prong_constraint_summary.pdf'}")
+    print(f"Wrote {paths.figures_dir / 'prong_hypergraph_summary.pdf'}")
 
 
 def signal_decomposition(fisher2, delta, label):
