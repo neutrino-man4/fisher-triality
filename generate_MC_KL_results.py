@@ -18,14 +18,14 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-
+PARTICLE_STR = "n25"
 ROOT = Path('/work/abal/triality/results')
-FIGURES_DIR = ROOT / "figures" / "mSD_window" / "n75"
+FIGURES_DIR = ROOT / "figures" / "mSD_window" / f"{PARTICLE_STR}"
 GENERATED_DIR = ROOT / "generated"
-DATA_PATH = '/ceph/abal/QFIT/MC/joint_datasets/KL/data.h5'
-WEB_DIR = Path("/web/abal/public_html/plots/triality/mSD_window/n75")
+DATA_PATH = f'/ceph/abal/QFIT/MC/joint_datasets/KL/data_{PARTICLE_STR}.h5'
+WEB_DIR = Path(f"/web/abal/public_html/plots/triality/mSD_window/{PARTICLE_STR}")
 FEATURE_NAMES = ["EEC narrow", "EEC wide", r"$e_2^{(1)}$", r"$e_3^{(1)}$"]
-
+_PREPROCESSING_STR = "whitened"  # or "_{_PREPROCESSING_STR}"
 
 @dataclass(frozen=True)
 class EventModel:
@@ -112,21 +112,45 @@ def standardize(data: np.ndarray) -> np.ndarray:
     std = data.std(axis=0)
     return (data - mean) / std
 
-def whiten(data: np.ndarray) -> np.ndarray:
+def whiten(data: np.ndarray) -> tuple[np.ndarray, dict]:
     mean = data.mean(axis=0)
     centered = data - mean
     cov = np.cov(centered, rowvar=False, bias=True)
     eigvals, eigvecs = np.linalg.eigh(cov)
     cov_inv_sqrt = eigvecs @ np.diag(1.0 / np.sqrt(eigvals)) @ eigvecs.T
     zdata = centered @ cov_inv_sqrt
-    return zdata
+    n_features = data.shape[1]
+    col_norms = np.abs(cov_inv_sqrt).sum(axis=0)
+    W_norm = cov_inv_sqrt / col_norms
+    weights = {
+        f'wf{j}': {f'f{i}': W_norm[i, j] for i in range(n_features)}
+        for j in range(n_features)
+    }
+    return zdata, weights
 
 def summarize(data: np.ndarray, labels: np.ndarray) -> dict:
     qcd = data[labels == 0]
     top = data[labels == 1]
     mean = data.mean(axis=0)
     std = data.std(axis=0)
-    zdata = standardize(data)
+    if "standardize" in _PREPROCESSING_STR:
+        print("Standardizing data...")
+        zdata = standardize(data)
+    elif "whiten" in _PREPROCESSING_STR:
+        print("Whitening data...")
+        zdata, weights = whiten(data)
+        n_feat = len(FEATURE_NAMES)
+        plain_names = ["EEC narrow", "EEC wide", "e2", "e3"]
+        col_w = 10
+        header = f"{'':14}" + "".join(f"{'wf'+str(j):>{col_w}}" for j in range(n_feat))
+        print("\nWhitened feature composition (column-normalised mixing matrix):")
+        print(header)
+        for i, name in enumerate(plain_names):
+            row = f"{name:<14}" + "".join(
+                f"{weights['wf'+str(j)]['f'+str(i)]:>{col_w}.4f}" for j in range(n_feat)
+            )
+            print(row)
+
     #zdata = whiten(data)
     zqcd = zdata[labels == 0]
     ztop = zdata[labels == 1]
@@ -140,7 +164,7 @@ def summarize(data: np.ndarray, labels: np.ndarray) -> dict:
     cubic_coeff = np.einsum("i,j,k,ijk", direction, direction, direction, third)
     quad_coeff = direction @ corr @ direction
 
-    t_values = np.linspace(0.0, 0.65, 65)
+    t_values = np.linspace(0.0, 0.65, 66)
     exact = np.array([np.log(np.mean(np.exp(t * projections))) for t in t_values])
     quad = 0.5 * quad_coeff * t_values**2
     cubic = quad + (cubic_coeff / 6.0) * t_values**3
@@ -214,11 +238,27 @@ def make_kl_figure(results: dict, metadata: dict) -> None:
     quad = np.array(curve["quadratic"])
     cubic = np.array(curve["cubic"])
 
+    t_refs = np.array([0.15, 0.30, 0.45, 0.60])
+    t_ids = np.searchsorted(t, t_refs)
+    print("Selected t values and errors:")
+    
+    print(f"{'t':<8} | {'Exact KL':<12} | {'Quadratic':<12} | {'Cubic':<20} | {'Error Reduction':<15}")
+    print("-" * 80)
+    for idx in range(len(t_refs)):
+        quad_error = abs(exact[t_ids[idx]] - quad[t_ids[idx]])
+        cubic_error = abs(exact[t_ids[idx]] - cubic[t_ids[idx]])
+        error_reduction = quad_error / cubic_error if cubic_error > 0 else float('inf')
+        # print(" \t t | \t Exact KL | \t Quadratic | \t Cubic (incl. Quadratic) | \t Cubic/Quadratic error reduction | \t")
+        # print(f" \t {t_refs[idx]:.2f} | \t {exact[t_ids[idx]]:.4f} | \t {quad[t_ids[idx]]:.4f} | \t {cubic[t_ids[idx]]:.4f} | \t { (quad_error/(quad_error - cubic_error)):.1f}x")
+        # Header
+        # Data row
+        print(f"{t_refs[idx]:<8.2f} | {exact[t_ids[idx]]:<12.6f} | {quad[t_ids[idx]]:<12.6f} | {cubic[t_ids[idx]]:<20.6f} | {error_reduction:<15.1f}x")
     fig, ax = plt.subplots(figsize=(8.5, 6.0))
     ax.plot(t, exact, color="#102542", linewidth=2.5, label="Exact KL", alpha=0.5)
     ax.plot(t, quad, color="#b24745", linewidth=2.0, linestyle="--", label="Quadratic")
     ax.plot(t, cubic, color="#4f7d39", linewidth=2.0, linestyle="-.", label="Quadratic + cubic")
     ax.set_xlabel(r"Shift magnitude $t$")
+    ax.set_xscale("log")
     ax.set_ylabel(r"$D_{\mathrm{KL}}(p_{\theta}\Vert p_{\theta+t v})$")
     ax.set_title(f"100000 events (22% TTBar): local KL expansion")
     ax.grid(alpha=0.25)
@@ -233,41 +273,67 @@ def make_kl_figure(results: dict, metadata: dict) -> None:
         transform=ax.transAxes, fontsize=14)
     ax.legend(frameon=False, loc="lower right", fontsize=14)
     fig.tight_layout()
-    fig.savefig(FIGURES_DIR / "MC_kl_comparison.pdf")
-    fig.savefig(FIGURES_DIR / "MC_kl_comparison.png")
-    fig.savefig(WEB_DIR / "MC_kl_comparison.png", dpi=500)
+    fig.savefig(FIGURES_DIR / f"MC_kl_comparison_{_PREPROCESSING_STR}.pdf")
+    fig.savefig(FIGURES_DIR / f"MC_kl_comparison_{_PREPROCESSING_STR}.png")
+    fig.savefig(WEB_DIR / f"MC_kl_comparison_{_PREPROCESSING_STR}.png", dpi=500)
     plt.close(fig)
 
 
-def make_hypergraph_figure(results: dict, metadata: dict) -> None:
+def make_kl_residuals(results: dict, metadata: dict) -> None:
+    curve = results["kl_curve"]
+    t = np.array(curve["t"])
+    exact = np.array(curve["exact"])
+    quad = np.array(curve["quadratic"])
+    cubic = np.array(curve["cubic"])
+
+    res_quad = (quad - exact)
+    res_cubic = (cubic - exact)
+
+    fig, ax = plt.subplots(figsize=(8.5, 6.0))
+    ax.plot(t, res_quad, color="#b24745", linewidth=2.0, linestyle="--", label=r"Quadratic $-$ Exact")
+    ax.plot(t, res_cubic, color="#4f7d39", linewidth=2.0, linestyle="-.", label=r"(Quadratic + cubic) $-$ Exact")
+    ax.axhline(0.0, color="#102542", linewidth=1.0, alpha=0.4)
+    ax.set_xlabel(r"Shift $t$")
+    #ax.set_xscale("log")
+    ax.set_ylabel(r"Residual: $\hat{D}_{\mathrm{KL}} - D_{\mathrm{KL}}$")
+    ax.set_yscale("symlog", linthresh=1e-5, linscale=0.5)
+    ax.set_ylim(-1e-3, 1e-3)
+    ax.set_xlim(0,0.45)
+    ax.set_title("100000 events (22% TTBar): KL expansion residuals")
+    ax.grid(alpha=0.25)
+    ax.text(0.62, 0.74,
+        rf"$p_T > {metadata['pt_cut']:.0f}$ GeV"
+        "\n\n"
+        rf"$m_{{\mathrm{{SD}}}} \in [{metadata['mass_win_lo']:.0f},\, {metadata['mass_win_hi']:.0f}]$ GeV""\n\n"
+        rf"{metadata['frac_top']*100:.0f}% top jets"
+        "\n\n"
+        r"$N_\mathrm{constituents} = " + f"{metadata['num_particles']}, " + r"N_\mathrm{events} = " + f"{metadata['num_events']}" + "$",
+        transform=ax.transAxes, fontsize=9)
+    ax.legend(frameon=False, loc="lower right", fontsize=14)
+    fig.tight_layout()
+    fig.savefig(FIGURES_DIR / f"MC_kl_residuals_{_PREPROCESSING_STR}.pdf")
+    fig.savefig(FIGURES_DIR / f"MC_kl_residuals_{_PREPROCESSING_STR}.png")
+    fig.savefig(WEB_DIR / f"MC_kl_residuals_{_PREPROCESSING_STR}.png", dpi=500)
+    plt.close(fig)
+
+
+def make_hypergraph_figure(results: dict, metadata: dict, separate: bool = False) -> None:
     feature_names = results["feature_names"]
     centrality2 = np.array(results["centrality_order2"])
     centrality3 = np.array(results["centrality_order3"])
     triplets = results["triplet_weights"]
 
-    fig, axes = plt.subplots(1, 2, figsize=(9.2, 4.2))
+    if "whiten" in _PREPROCESSING_STR:
+        display_names = [rf"$F_{{{i}}}$" for i in range(len(feature_names))]
+    else:
+        display_names = feature_names
+    name_map = dict(zip(feature_names, display_names))
 
-    x = np.arange(len(feature_names))
-    width = 0.36
-    axes[0].bar(x - width / 2, centrality2, width=width, color="#102542", label="Pairwise graph")
-    axes[0].bar(x + width / 2, centrality3, width=width, color="#d97925", label="3-hypergraph")
-    axes[0].set_xticks(x, feature_names, rotation=20, ha="right")
-    axes[0].set_ylabel("Centrality")
-    axes[0].set_title("Feature centrality by order")
-    axes[0].set_ylim(0.0, 1.35 * max(np.max(centrality2), np.max(centrality3)))
-    axes[0].legend(frameon=False)
-    axes[0].grid(axis="y", alpha=0.25)
-
-    labels = [" / ".join(item["features"]) for item in triplets]
+    triplet_labels = [" / ".join(name_map[f] for f in item["features"]) for item in triplets]
     values = [item["value"] for item in triplets]
-    colors = ["#4f7d39" if value > 0 else "#b24745" for value in values]
-    axes[1].barh(labels, values, color=colors)
-    axes[1].axvline(0.0, color="black", linewidth=0.8)
-    axes[1].set_xlabel(r"Standardized $I^{(3)}_{abc}$")
-    axes[1].set_title("Distinct 3-hyperedge weights")
-    axes[1].grid(axis="x", alpha=0.25)
+    colors = ["#4f7d39" if v > 0 else "#b24745" for v in values]
 
-    fig.text(0.51, 0.02,
+    meta_text = (
         "---------------------------------------\n"
         rf"$p_T > {metadata['pt_cut']:.0f}$ GeV,"
         "\n"
@@ -275,14 +341,56 @@ def make_hypergraph_figure(results: dict, metadata: dict) -> None:
         "\n"
         rf"{metadata['frac_top']*100:.0f}% top jets,"
         "\n"
-        r"$N_\mathrm{constituents} = " + f"{metadata['num_particles']}, " + r"N_\mathrm{events} = " + f"{metadata['num_events']}" + "$",
-        ha="center", fontsize=7)
-    fig.tight_layout()
-    fig.savefig(FIGURES_DIR / "MC_hypergraph_summary_standardized.pdf")
-    fig.savefig(FIGURES_DIR / "MC_hypergraph_summary_standardized.png", dpi=500)
-    fig.savefig(WEB_DIR / "MC_hypergraph_summary_standardized.png", dpi=500)
+        r"$N_\mathrm{constituents} = " + f"{metadata['num_particles']}, " + r"N_\mathrm{events} = " + f"{metadata['num_events']}" + "$"
+    )
 
-    plt.close(fig)
+    def _draw_centrality(ax: plt.Axes) -> None:
+        x = np.arange(len(display_names))
+        width = 0.36
+        ax.bar(x - width / 2, centrality2, width=width, color="#102542", label="Pairwise graph")
+        ax.bar(x + width / 2, centrality3, width=width, color="#d97925", label="3-hypergraph")
+        ax.set_xticks(x, display_names, rotation=20, ha="right")
+        ax.set_ylabel("Centrality")
+        ax.set_title("Feature centrality by order")
+        ax.set_ylim(0.0, 1.35 * max(np.max(centrality2), np.max(centrality3)))
+        ax.legend(frameon=False)
+        ax.grid(axis="y", alpha=0.25)
+
+    def _draw_triplets(ax: plt.Axes) -> None:
+        ax.barh(triplet_labels, values, color=colors)
+        ax.axvline(0.0, color="black", linewidth=0.8)
+        ax.set_xlabel(r"$I^{(3)}_{abc}$" + f" from {_PREPROCESSING_STR} features")
+        ax.set_title("Distinct 3-hyperedge weights")
+        ax.grid(axis="x", alpha=0.25)
+
+    if separate:
+        fig_c, ax_c = plt.subplots(figsize=(5.0, 4.2))
+        _draw_centrality(ax_c)
+        fig_c.text(0.5, 0.01, " ", ha="center", fontsize=7)
+        fig_c.tight_layout()
+        fig_c.savefig(FIGURES_DIR / f"MC_hypergraph_centrality_{_PREPROCESSING_STR}.pdf")
+        fig_c.savefig(FIGURES_DIR / f"MC_hypergraph_centrality_{_PREPROCESSING_STR}.png", dpi=500)
+        fig_c.savefig(WEB_DIR / f"MC_hypergraph_centrality_{_PREPROCESSING_STR}.png", dpi=500)
+        plt.close(fig_c)
+
+        fig_t, ax_t = plt.subplots(figsize=(5.5, 4.2))
+        _draw_triplets(ax_t)
+        fig_t.text(0.5, 0.01, " ", ha="center", fontsize=7)
+        fig_t.tight_layout()
+        fig_t.savefig(FIGURES_DIR / f"MC_hypergraph_triplets_{_PREPROCESSING_STR}.pdf")
+        fig_t.savefig(FIGURES_DIR / f"MC_hypergraph_triplets_{_PREPROCESSING_STR}.png", dpi=500)
+        fig_t.savefig(WEB_DIR / f"MC_hypergraph_triplets_{_PREPROCESSING_STR}.png", dpi=500)
+        plt.close(fig_t)
+    else:
+        fig, axes = plt.subplots(1, 2, figsize=(9.2, 4.2))
+        _draw_centrality(axes[0])
+        _draw_triplets(axes[1])
+        fig.text(0.51, 0.02, meta_text, ha="center", fontsize=7)
+        fig.tight_layout()
+        fig.savefig(FIGURES_DIR / f"MC_hypergraph_summary_{_PREPROCESSING_STR}.pdf")
+        fig.savefig(FIGURES_DIR / f"MC_hypergraph_summary_{_PREPROCESSING_STR}.png", dpi=500)
+        fig.savefig(WEB_DIR / f"MC_hypergraph_summary_{_PREPROCESSING_STR}.png", dpi=500)
+        plt.close(fig)
 
 
 def main() -> None:
@@ -290,6 +398,7 @@ def main() -> None:
     GENERATED_DIR.mkdir(exist_ok=True, parents=True)
     WEB_DIR.mkdir(exist_ok=True, parents=True)
     #data, labels = generate_sample()
+    print(f"Loading data from {DATA_PATH}...")
     with h5py.File(DATA_PATH, "r") as fh:
         data = fh["features"][()]
         labels = fh["labels"][()]
@@ -314,7 +423,8 @@ def main() -> None:
         json.dump(results, handle, indent=2)
 
     make_kl_figure(results, metadata)
-    make_hypergraph_figure(results, metadata)
+    make_kl_residuals(results, metadata)
+    make_hypergraph_figure(results, metadata, separate=True)
     #import pdb;pdb.set_trace()
     
     #print(f"Wrote {(GENERATED_DIR / 'MC_results.json').relative_to(ROOT)}")
