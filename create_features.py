@@ -49,8 +49,8 @@ logger = logging.getLogger(__name__)
 # default QCD filename would be 'qcd_dijet.h5'.  Update QCD_FILENAME below if
 # your run used a different --jet-type string.
 QCD_BASE    : pathlib.Path = pathlib.Path("/ceph/abal/QFIT/MC/HDF5/qcd_dijet")
-TOP_BASE    : pathlib.Path = pathlib.Path("/ceph/abal/QFIT/MC/HDF5/TTBar")
-OUTPUT_PATH : pathlib.Path = pathlib.Path("/ceph/abal/QFIT/MC/joint_datasets/KL/data.h5")
+TOP_BASE    : pathlib.Path = pathlib.Path("/ceph/abal/QFIT/MC/HDF5/TTBar_OLD")
+OUTPUT_PATH : pathlib.Path = pathlib.Path("/ceph/abal/QFIT/MC/joint_datasets/KL/data_n75.h5")
 
 QCD_FILENAME : str = "qcd_dijet.h5"
 TOP_FILENAME : str = "TTBar.h5"
