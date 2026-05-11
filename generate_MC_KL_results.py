@@ -257,10 +257,10 @@ def make_kl_figure(results: dict, metadata: dict) -> None:
     ax.plot(t, exact, color="#102542", linewidth=2.5, label="Exact KL", alpha=0.5)
     ax.plot(t, quad, color="#b24745", linewidth=2.0, linestyle="--", label="Quadratic")
     ax.plot(t, cubic, color="#4f7d39", linewidth=2.0, linestyle="-.", label="Quadratic + cubic")
-    ax.set_xlabel(r"Shift magnitude $t$")
+    ax.set_xlabel(r"Shift magnitude $t$", fontsize=17)
     ax.set_xscale("log")
-    ax.set_ylabel(r"$D_{\mathrm{KL}}(p_{\theta}\Vert p_{\theta+t v})$")
-    ax.set_title(f"100000 events (22% TTBar): local KL expansion")
+    ax.set_ylabel(r"$D_{\mathrm{KL}}(p_{\theta}\Vert p_{\theta+t v})$",fontsize=17)
+    ax.set_title(f"100000 events (22% TTBar): local KL expansion",fontsize=18.5)
     ax.grid(alpha=0.25)
     # Add annotation for pT cut and mass window
     ax.text(0.02, 0.65,
@@ -270,8 +270,8 @@ def make_kl_figure(results: dict, metadata: dict) -> None:
         rf"{metadata['frac_top']*100:.0f}% top jets"
         "\n\n"
         r"$N_\mathrm{constituents} = " + f"{metadata['num_particles']}, " + r"N_\mathrm{events} = " + f"{metadata['num_events']}" + "$",
-        transform=ax.transAxes, fontsize=14)
-    ax.legend(frameon=False, loc="lower right", fontsize=14)
+        transform=ax.transAxes, fontsize=16)
+    ax.legend(frameon=False, loc="lower right", fontsize=16)
     fig.tight_layout()
     fig.savefig(FIGURES_DIR / f"MC_kl_comparison_{_PREPROCESSING_STR}.pdf")
     fig.savefig(FIGURES_DIR / f"MC_kl_comparison_{_PREPROCESSING_STR}.png")
@@ -293,22 +293,22 @@ def make_kl_residuals(results: dict, metadata: dict) -> None:
     ax.plot(t, res_quad, color="#b24745", linewidth=2.0, linestyle="--", label=r"Quadratic $-$ Exact")
     ax.plot(t, res_cubic, color="#4f7d39", linewidth=2.0, linestyle="-.", label=r"(Quadratic + cubic) $-$ Exact")
     ax.axhline(0.0, color="#102542", linewidth=1.0, alpha=0.4)
-    ax.set_xlabel(r"Shift $t$")
+    ax.set_xlabel(r"Shift $t$",fontsize=18)
     #ax.set_xscale("log")
-    ax.set_ylabel(r"Residual: $\hat{D}_{\mathrm{KL}} - D_{\mathrm{KL}}$")
+    ax.set_ylabel(r"Residual: $\hat{D}_{\mathrm{KL}} - D_{\mathrm{KL}}$",fontsize=18)
     ax.set_yscale("symlog", linthresh=1e-5, linscale=0.5)
     ax.set_ylim(-1e-3, 1e-3)
     ax.set_xlim(0,0.45)
-    ax.set_title("100000 events (22% TTBar): KL expansion residuals")
+    ax.set_title("100000 events (22% TTBar): KL expansion residuals",fontsize=18)
     ax.grid(alpha=0.25)
-    ax.text(0.62, 0.74,
+    ax.text(0.54, 0.65,
         rf"$p_T > {metadata['pt_cut']:.0f}$ GeV"
         "\n\n"
         rf"$m_{{\mathrm{{SD}}}} \in [{metadata['mass_win_lo']:.0f},\, {metadata['mass_win_hi']:.0f}]$ GeV""\n\n"
         rf"{metadata['frac_top']*100:.0f}% top jets"
         "\n\n"
         r"$N_\mathrm{constituents} = " + f"{metadata['num_particles']}, " + r"N_\mathrm{events} = " + f"{metadata['num_events']}" + "$",
-        transform=ax.transAxes, fontsize=9)
+        transform=ax.transAxes, fontsize=13)
     ax.legend(frameon=False, loc="lower right", fontsize=14)
     fig.tight_layout()
     fig.savefig(FIGURES_DIR / f"MC_kl_residuals_{_PREPROCESSING_STR}.pdf")
@@ -347,19 +347,21 @@ def make_hypergraph_figure(results: dict, metadata: dict, separate: bool = False
     def _draw_centrality(ax: plt.Axes) -> None:
         x = np.arange(len(display_names))
         width = 0.36
-        ax.bar(x - width / 2, centrality2, width=width, color="#102542", label="Pairwise graph")
+        if "standardize" in _PREPROCESSING_STR:
+            ax.bar(x - width / 2, centrality2, width=width, color="#102542", label="Pairwise graph")
+        #ax.bar(x - width / 2, centrality2, width=width, color="#102542", label="Pairwise graph")
         ax.bar(x + width / 2, centrality3, width=width, color="#d97925", label="3-hypergraph")
-        ax.set_xticks(x, display_names, rotation=20, ha="right")
-        ax.set_ylabel("Centrality")
-        ax.set_title("Feature centrality by order")
+        ax.set_xticks(x, display_names, rotation=20, ha="right", fontsize=11)
+        ax.set_ylabel("Centrality", fontsize=11)
+        ax.set_title(f"{_PREPROCESSING_STR.capitalize()} feature centrality by order", fontsize=13)
         ax.set_ylim(0.0, 1.35 * max(np.max(centrality2), np.max(centrality3)))
-        ax.legend(frameon=False)
+        ax.legend(frameon=False, fontsize=11)
         ax.grid(axis="y", alpha=0.25)
 
     def _draw_triplets(ax: plt.Axes) -> None:
         ax.barh(triplet_labels, values, color=colors)
         ax.axvline(0.0, color="black", linewidth=0.8)
-        ax.set_xlabel(r"$I^{(3)}_{abc}$" + f" from {_PREPROCESSING_STR} features")
+        ax.set_xlabel(r"$I^{(3)}_{abc}$" + f" from {_PREPROCESSING_STR} features", fontsize=13)
         ax.set_title("Distinct 3-hyperedge weights")
         ax.grid(axis="x", alpha=0.25)
 
