@@ -560,7 +560,7 @@ def make_constraint_figure(results: dict, paths: RunPaths) -> None:
 
 
 def make_hypergraph_figure(results: dict, paths: RunPaths) -> None:
-    fig, axes = plt.subplots(1, 2, figsize=(17.4,8.3))
+    fig, axes = plt.subplots(1, 2, figsize=(20,8.3))
 
     x = np.arange(len(FEATURE_LABELS))
     width = 0.38
@@ -569,20 +569,21 @@ def make_hypergraph_figure(results: dict, paths: RunPaths) -> None:
     cubic = np.array(results["cubic_node_score"])
     axes[0].bar(x - width / 2, quad, width=width, color="#9b2c2c", label="Pairwise graph score")
     axes[0].bar(x + width / 2, cubic, width=width, color="#1f4f82", label="Cubic-hypergraph score")
-    axes[0].set_xticks(x, FEATURE_LABELS, rotation=22, ha="right")
-    axes[0].set_ylabel("Operator-aligned node score")
-    axes[0].set_title("Feature ranking")
+    axes[0].set_xticks(x + width / 2, FEATURE_LABELS, rotation=90, ha="right", fontsize=15)
+    axes[0].set_ylabel("Operator-aligned node score", fontsize=17)
+    axes[0].set_title("Feature ranking", fontsize=20)
     axes[0].grid(axis="y", alpha=0.25)
-    axes[0].legend(frameon=False, fontsize=8)
+    axes[0].legend(frameon=False, fontsize=16)
 
     triplets = results["top_triplets"][:6]
     labels = [" / ".join(item["features"]) for item in triplets]
     values = [item["aligned_score"] for item in triplets]
     colors = ["#1f4f82" if item["weight"] > 0 else "#d97925" for item in triplets]
     axes[1].barh(labels, values, color=colors)
+    axes[1].tick_params(axis="y", labelsize=18)
     axes[1].invert_yaxis()
-    axes[1].set_xlabel(r"$|u_a u_b u_c\,I^{(3)}_{abc}|$")
-    axes[1].set_title("Leading substructure-sensitive 3-hyperedges")
+    axes[1].set_xlabel(r"$|u_a u_b u_c\,I^{(3)}_{abc}|$", fontsize=20)
+    axes[1].set_title("Leading substructure-sensitive 3-hyperedges", fontsize=21)
     axes[1].grid(axis="x", alpha=0.25)
 
     fig.tight_layout()
