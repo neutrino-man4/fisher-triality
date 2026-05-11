@@ -42,13 +42,13 @@ def make_figure(npz_path: str, out_path: str) -> None:
             color=COLORS[mode], linewidth=2.2, marker="o", capsize=3.5, label=LABELS[mode],
         )
 
-    axes[0].set_xlabel("Labeled training events")
-    axes[0].set_ylabel("Test AUC")
+    axes[0].set_xlabel("Labeled training events", fontsize=15)
+    axes[0].set_ylabel("Test AUC", fontsize=15)
     axes[0].set_xticks(train_sizes)
     axes[0].set_ylim(min(ylims), max(ylims))
-    axes[0].set_title(task_title)
+    axes[0].set_title(task_title, fontsize=16)
     axes[0].grid(alpha=0.25)
-    axes[0].legend(frameon=False, fontsize=8)
+    axes[0].legend(frameon=False, fontsize=12)
 
     band_extremes = []
     for mode in PLOT_MODES:
@@ -61,13 +61,13 @@ def make_figure(npz_path: str, out_path: str) -> None:
             color=COLORS[mode], alpha=0.15,
         )
 
-    axes[1].set_xlabel("Training epoch")
-    axes[1].set_ylabel("Validation AUC")
+    axes[1].set_xlabel("Training epoch", fontsize=15)
+    axes[1].set_ylabel("Validation AUC", fontsize=15)
     axes[1].set_xlim(1, n_epochs)
     axes[1].set_ylim(min(band_extremes) - 0.03, max(band_extremes) + 0.03)
-    axes[1].set_title(f"Convergence at {epoch_train_size} labeled events")
+    axes[1].set_title(f"Convergence at {epoch_train_size} labeled events", fontsize=15)
     axes[1].grid(alpha=0.25)
-    axes[1].legend(frameon=False, fontsize=8)
+    axes[1].legend(frameon=False, fontsize=12)
 
     fig.tight_layout()
     fig.savefig(out_path)
